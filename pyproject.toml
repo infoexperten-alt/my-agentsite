@@ -1,0 +1,53 @@
+[build-system]
+requires = ["setuptools>=61", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "agentsite"
+version = "0.1.0"
+description = "AI-Powered Website Builder using Prompture agent orchestration"
+readme = "README.md"
+license = "MIT"
+requires-python = ">=3.10"
+authors = [{ name = "Juan Denis", email = "juan@vene.co" }]
+classifiers = [
+    "Programming Language :: Python :: 3",
+    "Operating System :: OS Independent",
+]
+dependencies = [
+    "prompture>=0.0.38",
+    "fastapi>=0.100",
+    "uvicorn[standard]>=0.20",
+    "aiosqlite>=0.19",
+    "click>=8.0",
+    "pydantic>=2.0",
+    "pydantic-settings>=2.0",
+    "python-dotenv>=0.19.0",
+    "python-multipart>=0.0.6",
+]
+
+[project.optional-dependencies]
+test = ["pytest>=7.0", "pytest-asyncio>=0.23.0", "httpx>=0.25.0"]
+dev = ["pytest>=7.0", "pytest-asyncio>=0.23.0", "httpx>=0.25.0", "ruff>=0.8.0"]
+
+[project.scripts]
+agentsite = "agentsite.cli:cli"
+
+[tool.setuptools.packages.find]
+include = ["agentsite*"]
+
+[tool.ruff]
+target-version = "py310"
+line-length = 120
+
+[tool.ruff.lint]
+select = ["E", "W", "F", "I", "UP", "B", "SIM", "RUF"]
+ignore = ["E501"]
+
+[tool.ruff.format]
+quote-style = "double"
+indent-style = "space"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+asyncio_mode = "auto"

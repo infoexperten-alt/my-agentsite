@@ -1,0 +1,14 @@
+services:
+  agentsite:
+    build: .
+    ports:
+      - "6391:6391"
+    env_file:
+      - .env
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    volumes:
+      - agentsite-data:/root/.agentsite
+
+volumes:
+  agentsite-data:

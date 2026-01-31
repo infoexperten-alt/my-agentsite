@@ -1,0 +1,14 @@
+__pycache__
+*.pyc
+*.pyo
+.git
+.gitignore
+.env
+.env.copy
+.vscode
+.ruff_cache
+*.egg-info
+dist
+build
+tests
+.planning
