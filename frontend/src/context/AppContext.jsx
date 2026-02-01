@@ -7,7 +7,6 @@ const AppContext = createContext(null);
 export function AppProvider({ children }) {
   const modelsState = useModels();
   const providersState = useProviders();
-  const [settingsOpen, setSettingsOpen] = useState(false);
   const [search, setSearch] = useState("");
 
   return (
@@ -15,8 +14,6 @@ export function AppProvider({ children }) {
       value={{
         models: modelsState,
         providers: providersState,
-        settingsOpen,
-        setSettingsOpen,
         search,
         setSearch,
       }}

@@ -1,6 +1,5 @@
 import { NavLink } from "react-router-dom";
 import { SquaresFour, Users, ChartLineUp, Key, Gear, Sparkle } from "@phosphor-icons/react";
-import { useApp } from "../../context/AppContext";
 
 const navItems = [
   { to: "/", icon: SquaresFour, label: "Projects" },
@@ -8,9 +7,12 @@ const navItems = [
   { to: "/analytics", icon: ChartLineUp, label: "Analytics & Usage" },
 ];
 
-export default function AppSidebar() {
-  const { setSettingsOpen } = useApp();
+const settingsItems = [
+  { to: "/settings/api-keys", icon: Key, label: "API Keys" },
+  { to: "/settings", icon: Gear, label: "General" },
+];
 
+export default function AppSidebar() {
   return (
     <aside className="w-64 bg-slate-950 border-r border-slate-800 flex flex-col justify-between shrink-0">
       <div>
@@ -48,20 +50,23 @@ export default function AppSidebar() {
           <p className="px-3 text-xs font-semibold text-slate-500 uppercase tracking-wider mb-2 mt-6">
             Settings
           </p>
-          <button
-            onClick={() => setSettingsOpen(true)}
-            className="flex items-center gap-3 px-3 py-2.5 rounded-lg hover:bg-slate-900 hover:text-white transition-colors w-full text-left"
-          >
-            <Key size={20} />
-            <span className="font-medium">API Keys</span>
-          </button>
-          <button
-            onClick={() => setSettingsOpen(true)}
-            className="flex items-center gap-3 px-3 py-2.5 rounded-lg hover:bg-slate-900 hover:text-white transition-colors w-full text-left"
-          >
-            <Gear size={20} />
-            <span className="font-medium">General</span>
-          </button>
+          {settingsItems.map(({ to, icon: Icon, label }) => (
+            <NavLink
+              key={to}
+              to={to}
+              end={to === "/settings"}
+              className={({ isActive }) =>
+                `flex items-center gap-3 px-3 py-2.5 rounded-lg transition-colors ${
+                  isActive
+                    ? "bg-brand-500/10 text-brand-500 border border-brand-500/10"
+                    : "hover:bg-slate-900 hover:text-white"
+                }`
+              }
+            >
+              <Icon size={20} />
+              <span className="font-medium">{label}</span>
+            </NavLink>
+          ))}
         </nav>
       </div>
     </aside>

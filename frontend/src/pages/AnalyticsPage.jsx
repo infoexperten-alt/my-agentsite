@@ -1,18 +1,43 @@
 import { useState } from "react";
 import {
   CurrencyDollar,
-  TrendUp,
+  Lightning,
+  ChartBar,
   DownloadSimple,
 } from "@phosphor-icons/react";
 import MetricCard from "../components/analytics/MetricCard";
 import TokenChart from "../components/analytics/TokenChart";
 import CostByAgentChart from "../components/analytics/CostByAgentChart";
 import ActivityTable from "../components/analytics/ActivityTable";
+import { useAnalytics } from "../hooks/useAnalytics";
 
 const TIME_FILTERS = ["Last 30 Days", "Month to Date", "All Time"];
 
+function formatTokens(n) {
+  if (n == null || n === 0) return "0";
+  if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(1)}M`;
+  if (n >= 1_000) return `${(n / 1_000).toFixed(1)}k`;
+  return String(n);
+}
+
+function formatCost(n) {
+  if (n == null) return "$0.00";
+  return `$${n.toFixed(2)}`;
+}
+
 export default function AnalyticsPage() {
   const [timeFilter, setTimeFilter] = useState(TIME_FILTERS[0]);
+  const { stats, dailyStats, runs, loading } = useAnalytics(timeFilter);
+
+  const totalInputTokens = stats
+    ? Object.values(stats.per_agent).reduce((s, a) => s + a.total_input_tokens, 0)
+    : 0;
+  const totalOutputTokens = stats
+    ? Object.values(stats.per_agent).reduce((s, a) => s + a.total_output_tokens, 0)
+    : 0;
+  const totalTokens = totalInputTokens + totalOutputTokens;
+  const totalRuns = stats?.total_runs ?? 0;
+  const avgTokensPerRun = totalRuns > 0 ? Math.round(totalTokens / totalRuns) : 0;
 
   return (
     <div className="flex-1 overflow-y-auto">
@@ -55,57 +80,55 @@ export default function AnalyticsPage() {
           <div className="grid grid-cols-1 md:grid-cols-4 gap-6">
             <MetricCard
               label="Total Spend (Est.)"
-              value="$42.80"
+              value={loading ? "—" : formatCost(stats?.total_cost)}
               icon={CurrencyDollar}
-              trend={
-                <>
-                  <TrendUp size={12} /> +12% from last month
-                </>
+            />
+            <MetricCard
+              label="Total Tokens"
+              value={loading ? "—" : formatTokens(totalTokens)}
+              icon={Lightning}
+              sub={
+                totalTokens > 0 ? (
+                  <>
+                    <span className="text-brand-400">{formatTokens(totalInputTokens)}</span> in /{" "}
+                    <span className="text-purple-400">{formatTokens(totalOutputTokens)}</span> out
+                  </>
+                ) : null
               }
             />
-            <MetricCard label="Total Tokens" value="1.2M">
-              <div className="w-full bg-slate-800 h-1.5 rounded-full mt-2 overflow-hidden">
-                <div className="bg-blue-500 h-1.5 rounded-full w-[65%]" />
-              </div>
-              <p className="text-[10px] text-slate-500 mt-1">
-                65% of monthly limit
-              </p>
-            </MetricCard>
             <MetricCard
               label="Generations"
-              value="18"
+              value={loading ? "—" : String(totalRuns)}
+              icon={ChartBar}
               sub={
-                <>
-                  Avg. <span className="text-white">66k tokens</span> per build
-                </>
+                totalRuns > 0 ? (
+                  <>
+                    Avg. <span className="text-white">{formatTokens(avgTokensPerRun)} tokens</span> per run
+                  </>
+                ) : null
               }
             />
-            <div className="bg-gradient-to-br from-brand-700/40 to-slate-900 border border-brand-500/20 p-5 rounded-xl flex flex-col justify-between h-32 relative overflow-hidden">
-              <div className="flex justify-between items-start">
-                <p className="text-sm font-bold text-brand-400">Pro Plan</p>
-                <span className="bg-brand-500/20 text-brand-300 text-[10px] px-2 py-0.5 rounded border border-brand-500/30">
-                  Active
-                </span>
-              </div>
-              <div>
-                <p className="text-xs text-slate-400 mb-2">
-                  Renews in 12 days
-                </p>
-                <button className="w-full py-1.5 bg-brand-600 hover:bg-brand-500 text-white text-xs font-semibold rounded transition-colors shadow-lg">
-                  Manage Subscription
-                </button>
-              </div>
-            </div>
+            <MetricCard
+              label="Avg Duration"
+              value={
+                loading
+                  ? "—"
+                  : stats?.avg_duration_seconds != null
+                    ? `${stats.avg_duration_seconds.toFixed(1)}s`
+                    : "N/A"
+              }
+              sub={totalRuns > 0 ? `Across ${totalRuns} completed runs` : null}
+            />
           </div>
 
           {/* Charts row */}
           <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 h-96">
-            <TokenChart />
-            <CostByAgentChart />
+            <TokenChart data={dailyStats} loading={loading} />
+            <CostByAgentChart agents={stats?.per_agent} loading={loading} />
           </div>
 
           {/* Activity table */}
-          <ActivityTable />
+          <ActivityTable runs={runs} loading={loading} />
         </div>
       </div>
     </div>

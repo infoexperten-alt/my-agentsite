@@ -432,17 +432,30 @@ class AgentRunRepository:
         )
         await self._db.conn.commit()
 
-    async def list_recent(self, limit: int = 50) -> list[AgentRun]:
+    async def list_recent(self, limit: int = 50, since: str | None = None) -> list[AgentRun]:
         """List recent agent runs ordered by start time."""
-        cursor = await self._db.conn.execute(
-            "SELECT * FROM agent_runs ORDER BY started_at DESC LIMIT ?", (limit,)
-        )
+        if since:
+            cursor = await self._db.conn.execute(
+                "SELECT * FROM agent_runs WHERE started_at >= ? ORDER BY started_at DESC LIMIT ?",
+                (since, limit),
+            )
+        else:
+            cursor = await self._db.conn.execute(
+                "SELECT * FROM agent_runs ORDER BY started_at DESC LIMIT ?", (limit,)
+            )
         rows = await cursor.fetchall()
         return [self._row_to_run(row) for row in rows]
 
-    async def get_stats(self) -> dict:
-        """Get aggregated agent stats."""
-        cursor = await self._db.conn.execute("""
+    async def get_stats(self, since: str | None = None) -> dict:
+        """Get aggregated agent stats, optionally filtered by start date."""
+        where = "WHERE status = 'completed'"
+        params: list = []
+        if since:
+            where += " AND started_at >= ?"
+            params.append(since)
+
+        cursor = await self._db.conn.execute(
+            f"""
             SELECT
                 agent_name,
                 COUNT(*) as total_runs,
@@ -455,9 +468,11 @@ class AgentRunRepository:
                     ELSE NULL END
                 ) as avg_duration_seconds
             FROM agent_runs
-            WHERE status = 'completed'
+            {where}
             GROUP BY agent_name
-        """)
+        """,
+            params,
+        )
         rows = await cursor.fetchall()
         per_agent = {}
         total_runs = 0
@@ -488,6 +503,31 @@ class AgentRunRepository:
             "avg_duration_seconds": round(total_duration / duration_count, 1) if duration_count else None,
             "per_agent": per_agent,
         }
+
+    async def get_daily_stats(self, days: int = 30) -> list[dict]:
+        """Get daily token aggregates for the last N days."""
+        cursor = await self._db.conn.execute(
+            """
+            SELECT
+                DATE(started_at) as date,
+                SUM(input_tokens) as input_tokens,
+                SUM(output_tokens) as output_tokens
+            FROM agent_runs
+            WHERE started_at >= DATE('now', ?)
+            GROUP BY DATE(started_at)
+            ORDER BY date ASC
+        """,
+            (f"-{days} days",),
+        )
+        rows = await cursor.fetchall()
+        return [
+            {
+                "date": row["date"],
+                "input_tokens": row["input_tokens"] or 0,
+                "output_tokens": row["output_tokens"] or 0,
+            }
+            for row in rows
+        ]
 
     @staticmethod
     def _row_to_run(row: Any) -> AgentRun:

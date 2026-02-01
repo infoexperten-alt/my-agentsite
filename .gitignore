@@ -212,3 +212,5 @@ new_templates/
 # Frontend build output and dependencies
 frontend/dist/
 frontend/node_modules/
+
+.marketing
