@@ -78,7 +78,8 @@ def create_pipeline(
                 "Site Plan: {site_plan}\n"
                 "Style Spec: {style_spec}\n"
                 "Developer output: {page_output}\n\n"
-                "Use the read_file tool to inspect the generated files. "
+                "IMPORTANT: First call the list_files tool to discover what files were generated, "
+                "then use read_file to inspect each one. "
                 f"Approve if quality score >= {threshold}.",
             ),
         ],
@@ -180,7 +181,8 @@ def create_dynamic_pipeline(
                     "Site Plan: {site_plan}\n"
                     "Style Spec: {style_spec}\n"
                     "Developer output: {page_output}\n\n"
-                    "Use the read_file tool to inspect the generated files. "
+                    "IMPORTANT: First call the list_files tool to discover what files were generated, "
+                    "then use read_file to inspect each one. "
                     f"Approve if quality score >= {threshold}.",
                 ),
             ],

@@ -1,6 +1,19 @@
 import { useState, useEffect } from "react";
 import { Sparkle, WarningCircle, SpinnerGap, CheckCircle, CaretDown, CaretRight, Timer, Lightning, Terminal } from "@phosphor-icons/react";
 
+function formatDuration(seconds) {
+  if (seconds < 60) return `${Math.round(seconds * 10) / 10}s`;
+  const m = Math.floor(seconds / 60);
+  const s = Math.round(seconds % 60);
+  return s > 0 ? `${m}m ${s}s` : `${m}m`;
+}
+
+function formatTokens(n) {
+  if (n < 1000) return String(n);
+  if (n < 1_000_000) return `${(n / 1000).toFixed(1).replace(/\.0$/, "")}k`;
+  return `${(n / 1_000_000).toFixed(1).replace(/\.0$/, "")}M`;
+}
+
 function ElapsedTimer({ since }) {
   const [elapsed, setElapsed] = useState(0);
   useEffect(() => {
@@ -11,7 +24,7 @@ function ElapsedTimer({ since }) {
     const id = setInterval(tick, 1000);
     return () => clearInterval(id);
   }, [since]);
-  return <span className="text-[10px] tabular-nums text-slate-500">{elapsed}s</span>;
+  return <span className="text-[10px] tabular-nums text-slate-500">{formatDuration(elapsed)}</span>;
 }
 
 function AgentRow({ agent: a }) {
@@ -37,11 +50,11 @@ function AgentRow({ agent: a }) {
           <ElapsedTimer since={a.startedAt} />
         )}
         {a.status === "complete" && a.duration_s != null && (
-          <span className="text-slate-500 tabular-nums">{a.duration_s}s</span>
+          <span className="text-slate-500 tabular-nums">{formatDuration(a.duration_s)}</span>
         )}
         {a.status === "complete" && (a.input_tokens > 0 || a.output_tokens > 0) && (
-          <span className="text-slate-600 tabular-nums" title={`${a.input_tokens} in / ${a.output_tokens} out`}>
-            {a.input_tokens + a.output_tokens} tok
+          <span className="text-slate-600 tabular-nums" title={`${(a.input_tokens || 0).toLocaleString()} in / ${(a.output_tokens || 0).toLocaleString()} out`}>
+            {formatTokens(a.input_tokens + a.output_tokens)} tok
           </span>
         )}
         {hasOutput && (
@@ -108,11 +121,11 @@ function AgentProgressMessage({ message }) {
               <div className="flex items-center gap-2 text-xs border-t border-slate-800 pt-2 mt-2 text-slate-400">
                 <Timer size={12} className="shrink-0" />
                 <span>
-                  {agents.reduce((s, a) => s + (a.duration_s || 0), 0).toFixed(1)}s total
+                  {formatDuration(agents.reduce((s, a) => s + (a.duration_s || 0), 0))} total
                 </span>
                 <Lightning size={12} className="shrink-0 ml-2" />
-                <span>
-                  {agents.reduce((s, a) => s + (a.input_tokens || 0) + (a.output_tokens || 0), 0).toLocaleString()} tokens
+                <span title={`${agents.reduce((s, a) => s + (a.input_tokens || 0) + (a.output_tokens || 0), 0).toLocaleString()} tokens`}>
+                  {formatTokens(agents.reduce((s, a) => s + (a.input_tokens || 0) + (a.output_tokens || 0), 0))} tokens
                 </span>
               </div>
             )}

@@ -8,6 +8,13 @@ import {
   Check,
 } from "@phosphor-icons/react";
 
+function formatDuration(seconds) {
+  if (seconds < 60) return `${Math.round(seconds * 10) / 10}s`;
+  const m = Math.floor(seconds / 60);
+  const s = Math.round(seconds % 60);
+  return s > 0 ? `${m}m ${s}s` : `${m}m`;
+}
+
 function ElapsedTimer({ since }) {
   const [elapsed, setElapsed] = useState(0);
   useEffect(() => {
@@ -18,7 +25,7 @@ function ElapsedTimer({ since }) {
     const id = setInterval(tick, 1000);
     return () => clearInterval(id);
   }, [since]);
-  return <span className="text-[10px] tabular-nums opacity-70">{elapsed}s</span>;
+  return <span className="text-[10px] tabular-nums opacity-70">{formatDuration(elapsed)}</span>;
 }
 
 const ALL_AGENTS = {
@@ -89,7 +96,7 @@ export default function ProgressPipeline({ agents, pipelineAgents }) {
                   className="text-[10px] tabular-nums opacity-70"
                   title={`${agents[key].input_tokens || 0} in / ${agents[key].output_tokens || 0} out tokens`}
                 >
-                  {agents[key].duration_s}s
+                  {formatDuration(agents[key].duration_s)}
                 </span>
               )}
             </div>

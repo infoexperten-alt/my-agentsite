@@ -124,35 +124,53 @@ async def start_generation(
             error_detail = str(exc)
             tb = tb_mod.format_exc()
             logger.exception("Generation failed for project %s page %s", project_id, slug)
-            version.status = "failed"
-            version.error = error_detail
-            version.completed_at = datetime.now(timezone.utc).isoformat()
-            await version_repo.update(version)
-            # Broadcast error to WebSocket so frontend receives it.
-            # The pipeline may have already emitted its own error event,
-            # but we emit here too to cover cases where the pipeline
-            # failed before it could emit (e.g. construction errors).
-            from ...models import WSEvent
-            try:
-                await ws_manager.broadcast(
-                    project_id,
-                    WSEvent(type="error", data={"message": error_detail, "traceback": tb}),
+
+            # Check if files were written to disk despite the error
+            # (e.g. developer wrote files but reviewer rejection caused a retry that failed)
+            file_list = pm.list_version_files(project.id, slug, version_number)
+            if file_list:
+                logger.info(
+                    "Pipeline failed but %d files exist on disk for project %s page %s v%d — marking completed",
+                    len(file_list), project_id, slug, version_number,
                 )
+                files_content: dict[str, str] = {}
+                for fpath in file_list:
+                    content = pm.read_version_file(project.id, slug, version_number, fpath)
+                    if content is not None:
+                        files_content[fpath] = content
+                version.status = "completed"
+                version.files = files_content
+                version.completed_at = datetime.now(timezone.utc).isoformat()
+                await version_repo.update(version)
+            else:
+                version.status = "failed"
+                version.error = error_detail
+                version.completed_at = datetime.now(timezone.utc).isoformat()
+                await version_repo.update(version)
+            # Broadcast completion/error to WebSocket
+            from ...models import WSEvent
+            recovered = version.status == "completed"
+            try:
+                if not recovered:
+                    await ws_manager.broadcast(
+                        project_id,
+                        WSEvent(type="error", data={"message": error_detail, "traceback": tb}),
+                    )
                 await ws_manager.broadcast(
                     project_id,
                     WSEvent(
                         type="generation_complete",
                         data={
-                            "success": False,
+                            "success": recovered,
                             "slug": slug,
                             "version": version_number,
-                            "files": [],
-                            "error": error_detail,
+                            "files": file_list if recovered else [],
+                            "error": error_detail if not recovered else None,
                         },
                     ),
                 )
             except Exception:
-                logger.warning("Failed to broadcast error via WebSocket")
+                logger.warning("Failed to broadcast via WebSocket")
         finally:
             # Persist agent run records
             for run in pipeline.agent_runs:
