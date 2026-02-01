@@ -28,6 +28,8 @@ export default function useGeneration(projectId) {
             duration_s: msg.data?.duration_s,
             input_tokens: msg.data?.input_tokens,
             output_tokens: msg.data?.output_tokens,
+            output_preview: msg.data?.output_preview || "",
+            tool_calls_count: msg.data?.tool_calls_count || 0,
           },
         }));
       }),

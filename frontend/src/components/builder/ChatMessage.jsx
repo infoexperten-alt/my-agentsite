@@ -1,5 +1,5 @@
 import { useState, useEffect } from "react";
-import { Sparkle, WarningCircle, SpinnerGap, CheckCircle, CaretDown, CaretRight, Timer, Lightning } from "@phosphor-icons/react";
+import { Sparkle, WarningCircle, SpinnerGap, CheckCircle, CaretDown, CaretRight, Timer, Lightning, Terminal } from "@phosphor-icons/react";
 
 function ElapsedTimer({ since }) {
   const [elapsed, setElapsed] = useState(0);
@@ -12,6 +12,55 @@ function ElapsedTimer({ since }) {
     return () => clearInterval(id);
   }, [since]);
   return <span className="text-[10px] tabular-nums text-slate-500">{elapsed}s</span>;
+}
+
+function AgentRow({ agent: a }) {
+  const [showOutput, setShowOutput] = useState(false);
+  const hasOutput = a.status === "complete" && a.output_preview;
+
+  return (
+    <div>
+      <div className="flex items-center gap-2 text-xs">
+        {a.status === "complete" && (
+          <CheckCircle className="text-emerald-400 shrink-0" weight="fill" size={12} />
+        )}
+        {a.status === "running" && (
+          <SpinnerGap className="animate-spin text-brand-400 shrink-0" size={12} />
+        )}
+        {a.status === "pending" && (
+          <div className="w-3 h-3 rounded-full border border-slate-600 shrink-0" />
+        )}
+        <span className={`flex-1 ${a.status === "pending" ? "text-slate-500" : "text-slate-300"}`}>
+          {a.label}
+        </span>
+        {a.status === "running" && a.startedAt && (
+          <ElapsedTimer since={a.startedAt} />
+        )}
+        {a.status === "complete" && a.duration_s != null && (
+          <span className="text-slate-500 tabular-nums">{a.duration_s}s</span>
+        )}
+        {a.status === "complete" && (a.input_tokens > 0 || a.output_tokens > 0) && (
+          <span className="text-slate-600 tabular-nums" title={`${a.input_tokens} in / ${a.output_tokens} out`}>
+            {a.input_tokens + a.output_tokens} tok
+          </span>
+        )}
+        {hasOutput && (
+          <button
+            onClick={() => setShowOutput((s) => !s)}
+            className="text-slate-500 hover:text-slate-300 transition-colors cursor-pointer"
+            title="Show agent output"
+          >
+            <Terminal size={12} />
+          </button>
+        )}
+      </div>
+      {showOutput && a.output_preview && (
+        <pre className="mt-1.5 mb-1 text-[11px] text-slate-400 whitespace-pre-wrap font-mono overflow-x-auto max-h-48 overflow-y-auto bg-slate-950 rounded-lg p-2.5 border border-slate-800">
+          {a.output_preview}
+        </pre>
+      )}
+    </div>
+  );
 }
 
 function AgentProgressMessage({ message }) {
@@ -53,31 +102,7 @@ function AgentProgressMessage({ message }) {
         {expanded && (
           <div className="mt-3 space-y-2 border-t border-slate-800 pt-3">
             {agents.map((a) => (
-              <div key={a.name} className="flex items-center gap-2 text-xs">
-                {a.status === "complete" && (
-                  <CheckCircle className="text-emerald-400 shrink-0" weight="fill" size={12} />
-                )}
-                {a.status === "running" && (
-                  <SpinnerGap className="animate-spin text-brand-400 shrink-0" size={12} />
-                )}
-                {a.status === "pending" && (
-                  <div className="w-3 h-3 rounded-full border border-slate-600 shrink-0" />
-                )}
-                <span className={`flex-1 ${a.status === "pending" ? "text-slate-500" : "text-slate-300"}`}>
-                  {a.label}
-                </span>
-                {a.status === "running" && a.startedAt && (
-                  <ElapsedTimer since={a.startedAt} />
-                )}
-                {a.status === "complete" && a.duration_s != null && (
-                  <span className="text-slate-500 tabular-nums">{a.duration_s}s</span>
-                )}
-                {a.status === "complete" && (a.input_tokens > 0 || a.output_tokens > 0) && (
-                  <span className="text-slate-600 tabular-nums" title={`${a.input_tokens} in / ${a.output_tokens} out`}>
-                    {a.input_tokens + a.output_tokens} tok
-                  </span>
-                )}
-              </div>
+              <AgentRow key={a.name} agent={a} />
             ))}
             {done && agents.length > 0 && (
               <div className="flex items-center gap-2 text-xs border-t border-slate-800 pt-2 mt-2 text-slate-400">

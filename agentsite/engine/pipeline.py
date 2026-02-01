@@ -14,9 +14,13 @@ from prompture import GroupCallbacks, GroupResult, SequentialGroup
 from ..agents.orchestrator import create_dynamic_pipeline
 from ..config import settings
 from ..models import AgentConfig, AgentRun, PageOutput, Project, SitePlan, StyleSpec, WSEvent
+from .gemini_patch import apply_gemini_patch
 from .project_manager import ProjectManager
 
 logger = logging.getLogger("agentsite.pipeline")
+
+# Apply Gemini tool result format fix at import time
+apply_gemini_patch()
 
 def _agent_name_to_key(name: str) -> str:
     """Normalize agent name to short key (handles both persona and agent names)."""
@@ -54,18 +58,20 @@ def _merge_nested_group_state(group: Any) -> None:
     The developer's ``page_output`` is stored in the LoopGroup's state
     but never propagated to the parent SequentialGroup.  This helper
     copies nested state back up so the pipeline can access it.
+
+    Child state *always* overwrites parent state — the child ran later
+    and holds the most up-to-date values for keys like ``page_output``
+    and ``review_feedback``.
     """
-    parent_state = group.shared_state
     agents = getattr(group, "_agents", [])
     for item in agents:
         agent = item[0] if isinstance(item, tuple) else item
         if hasattr(agent, "shared_state") and hasattr(agent, "_agents"):
             # Recurse first
             _merge_nested_group_state(agent)
-            # Merge child state into parent (child wins for new keys)
+            # Merge child state into parent (child always wins)
             for k, v in agent.shared_state.items():
-                if k not in parent_state:
-                    group._state[k] = v
+                group._state[k] = v
 
 
 def _wrap_agent_run(agent: Any, deps: Any) -> None:
@@ -98,6 +104,8 @@ class GenerationPipeline:
         self.agent_runs: list[AgentRun] = []
         self._active_runs: dict[str, AgentRun] = {}
         self._run_start_times: dict[str, float] = {}
+        self._developer_output_text: str = ""  # direct capture from callback
+        self._developer_tool_calls: list[dict] = []  # tool calls from developer agent
 
     def _emit(self, event_type: str, agent: str = "", data: dict[str, Any] | None = None) -> None:
         """Fire a WebSocket event if a callback is registered."""
@@ -156,26 +164,58 @@ class GenerationPipeline:
             start_time = self._run_start_times.pop(name, None)
             duration_s = round(time.monotonic() - start_time, 1) if start_time else None
 
+            output_text = getattr(result, "output_text", "") or ""
+            tool_calls = getattr(result, "all_tool_calls", []) or []
+
             input_tokens = 0
             output_tokens = 0
             if run:
                 run.status = "completed"
                 run.completed_at = datetime.now(timezone.utc).isoformat()
-                usage = getattr(result, "usage", None) or {}
+                # Try multiple usage key formats (OpenAI vs Gemini vs Anthropic)
+                usage = getattr(result, "usage", None) or getattr(result, "run_usage", None) or {}
                 if isinstance(usage, dict):
-                    input_tokens = usage.get("input_tokens", 0) or usage.get("prompt_tokens", 0)
-                    output_tokens = usage.get("output_tokens", 0) or usage.get("completion_tokens", 0)
+                    input_tokens = (
+                        usage.get("input_tokens", 0)
+                        or usage.get("prompt_tokens", 0)
+                        or usage.get("promptTokenCount", 0)
+                    )
+                    output_tokens = (
+                        usage.get("output_tokens", 0)
+                        or usage.get("completion_tokens", 0)
+                        or usage.get("candidatesTokenCount", 0)
+                    )
                     run.input_tokens = input_tokens
                     run.output_tokens = output_tokens
+
+            # Capture developer output directly for fallback extraction
+            if agent_key == "developer":
+                self._developer_output_text = output_text
+                self._developer_tool_calls = tool_calls
+                logger.info(
+                    "Developer agent completed: output_text length=%d, tool_calls=%d, "
+                    "output_text[:200]=%s",
+                    len(output_text),
+                    len(tool_calls),
+                    repr(output_text[:200]),
+                )
+                if tool_calls:
+                    for tc in tool_calls:
+                        logger.info(
+                            "  tool_call: %s(%s)",
+                            tc.get("name", "?"),
+                            ", ".join(f"{k}=...({len(str(v))})" for k, v in (tc.get("arguments") or {}).items()),
+                        )
 
             self._emit(
                 "agent_complete",
                 agent=agent_key,
                 data={
-                    "output_preview": getattr(result, "output_text", "")[:500],
+                    "output_preview": output_text[:2000],
                     "duration_s": duration_s,
                     "input_tokens": input_tokens,
                     "output_tokens": output_tokens,
+                    "tool_calls_count": len(tool_calls),
                 },
             )
 
@@ -295,31 +335,92 @@ class GenerationPipeline:
             # check both the result's shared_state and the pipeline's
             # own state (which now includes merged nested group state).
             state = result.shared_state
-            page_output_text = state.get("page_output", "") or remaining_pipeline.shared_state.get("page_output", "")
+            page_output_text = (
+                state.get("page_output", "")
+                or remaining_pipeline.shared_state.get("page_output", "")
+                or self._developer_output_text  # direct capture from callback
+            )
+
+            logger.info(
+                "Post-pipeline state keys: result=%s, pipeline=%s, "
+                "page_output_text length=%d, developer_output_text length=%d, "
+                "written_files=%s",
+                list(state.keys()),
+                list(remaining_pipeline.shared_state.keys()),
+                len(page_output_text or ""),
+                len(self._developer_output_text),
+                written_files,
+            )
 
             # If the developer agent didn't write files via tools, try to
             # extract content from its raw output text as a fallback.
             if not written_files:
+                logger.warning(
+                    "No files written via tools for project %s page %s v%d. "
+                    "page_output_text[:500]: %s",
+                    project.id, slug, version_number,
+                    (page_output_text or "")[:500],
+                )
                 if page_output_text:
                     self._write_files_from_output(project.id, slug, version_number, page_output_text)
 
             # Verify files actually exist on disk
             final_files = self._pm.list_version_files(project.id, slug, version_number)
+
+            # Fallback chain: try multiple strategies to get files on disk
+            if not final_files and self._developer_tool_calls:
+                logger.warning(
+                    "No files on disk — trying extraction from %d tool_calls",
+                    len(self._developer_tool_calls),
+                )
+                self._write_files_from_tool_calls(
+                    project.id, slug, version_number, self._developer_tool_calls
+                )
+                final_files = self._pm.list_version_files(project.id, slug, version_number)
+
+            if not final_files:
+                # Strategy 2: Extract from text output sources
+                for source_name, source_text in [
+                    ("page_output_text", page_output_text),
+                    ("developer_output_text", self._developer_output_text),
+                ]:
+                    if source_text:
+                        logger.warning(
+                            "No files on disk — trying text fallback from %s (length=%d)",
+                            source_name, len(source_text),
+                        )
+                        self._write_files_from_output(project.id, slug, version_number, source_text)
+                        final_files = self._pm.list_version_files(project.id, slug, version_number)
+                        if final_files:
+                            break
+
             if not final_files:
                 logger.error(
-                    "Generation produced no files for project %s page %s v%d",
+                    "Generation produced no files for project %s page %s v%d. "
+                    "tool_calls=%d, developer_output_text[:500]=%s",
                     project.id, slug, version_number,
+                    len(self._developer_tool_calls),
+                    self._developer_output_text[:500],
                 )
                 raise RuntimeError(
                     "Generation completed but no files were written to disk. "
-                    "The developer agent may have returned output in an unexpected format."
+                    "The developer agent may have returned output in an unexpected format.\n\n"
+                    f"Developer output preview:\n{self._developer_output_text[:1000]}"
                 )
+
+            # Read files from disk into a dict for DB storage
+            files_content: dict[str, str] = {}
+            for fpath in final_files:
+                content = self._pm.read_version_file(project.id, slug, version_number, fpath)
+                if content is not None:
+                    files_content[fpath] = content
 
             self._emit("generation_complete", data={
                 "success": result.success,
                 "slug": slug,
                 "version": version_number,
                 "files": final_files,
+                "files_content": files_content,
                 "usage": combined_usage,
             })
 
@@ -340,6 +441,27 @@ class GenerationPipeline:
             })
             raise
 
+    def _write_files_from_tool_calls(
+        self, project_id: str, slug: str, version: int, tool_calls: list[dict]
+    ) -> None:
+        """Extract files from write_file tool call arguments and write them to disk."""
+        for tc in tool_calls:
+            name = tc.get("name", "")
+            args = tc.get("arguments", {})
+            if isinstance(args, str):
+                try:
+                    args = json.loads(args)
+                except (json.JSONDecodeError, TypeError):
+                    continue
+            if name == "write_file" and "path" in args and "content" in args:
+                path = args["path"]
+                content = args["content"]
+                try:
+                    self._pm.write_version_file(project_id, slug, version, path, content)
+                    logger.info("Wrote file from tool_call args: %s (%d bytes)", path, len(content))
+                except Exception:
+                    logger.warning("Failed to write file from tool_call: %s", path, exc_info=True)
+
     def _write_files_from_output(
         self, project_id: str, slug: str, version: int, output_text: str
     ) -> None:
@@ -355,12 +477,59 @@ class GenerationPipeline:
                 logger.info("Wrote file from output: %s", f.path)
         except Exception:
             logger.warning(
-                "Could not parse PageOutput JSON, attempting HTML extraction (length=%d)",
+                "Could not parse PageOutput JSON, attempting fenced/raw extraction (length=%d)",
                 len(output_text),
                 exc_info=True,
             )
-            # Last resort: if the output contains raw HTML, save it as index.html
-            self._try_extract_raw_html(project_id, slug, version, output_text)
+            # Try extracting markdown-fenced code blocks first
+            wrote_fenced = self._extract_fenced_blocks(project_id, slug, version, output_text)
+            if not wrote_fenced:
+                # Last resort: if the output contains raw HTML, save it as index.html
+                self._try_extract_raw_html(project_id, slug, version, output_text)
+
+    def _extract_fenced_blocks(
+        self, project_id: str, slug: str, version: int, text: str
+    ) -> bool:
+        """Extract markdown-fenced code blocks (```html, ```css, ```js) and write them.
+
+        Returns True if at least one file was written.
+        """
+        import re
+
+        # Match ```html ... ```, ```css ... ```, ```javascript/js ... ```
+        pattern = r"```(\w+)\s*\n([\s\S]*?)```"
+        matches = re.findall(pattern, text)
+        if not matches:
+            return False
+
+        lang_to_file = {
+            "html": "index.html",
+            "css": "styles.css",
+            "js": "script.js",
+            "javascript": "script.js",
+        }
+        wrote_any = False
+        # Track which filenames have been used to avoid overwriting
+        used_names: set[str] = set()
+
+        for lang, content in matches:
+            lang_lower = lang.lower()
+            filename = lang_to_file.get(lang_lower)
+            if not filename:
+                continue
+            # If we already wrote this filename, append a suffix
+            if filename in used_names:
+                base, ext = filename.rsplit(".", 1)
+                counter = 2
+                while f"{base}_{counter}.{ext}" in used_names:
+                    counter += 1
+                filename = f"{base}_{counter}.{ext}"
+            used_names.add(filename)
+            self._pm.write_version_file(project_id, slug, version, filename, content.strip())
+            logger.info("Extracted fenced %s block as %s (%d bytes)", lang_lower, filename, len(content))
+            wrote_any = True
+
+        return wrote_any
 
     def _try_extract_raw_html(
         self, project_id: str, slug: str, version: int, text: str
@@ -368,10 +537,14 @@ class GenerationPipeline:
         """Attempt to extract raw HTML from agent output as a last resort."""
         import re
 
+        # Strip markdown code fences if wrapping the entire HTML
+        stripped = re.sub(r"^```\w*\s*\n", "", text.strip())
+        stripped = re.sub(r"\n```\s*$", "", stripped)
+
         # Look for HTML content (<!DOCTYPE or <html)
         html_match = re.search(
             r"(<!DOCTYPE html[\s\S]*?</html>|<html[\s\S]*?</html>)",
-            text,
+            stripped,
             re.IGNORECASE,
         )
         if html_match:

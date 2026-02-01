@@ -105,9 +105,18 @@ async def start_generation(
                     page_prompt=prompt,
                 ),
             )
+            # Read generated files from disk into version record
+            file_list = pm.list_version_files(project.id, slug, version_number)
+            files_content: dict[str, str] = {}
+            for fpath in file_list:
+                content = pm.read_version_file(project.id, slug, version_number, fpath)
+                if content is not None:
+                    files_content[fpath] = content
+
             # Update version record
             version.status = "completed"
             version.usage = result.aggregate_usage
+            version.files = files_content
             version.completed_at = datetime.now(timezone.utc).isoformat()
             await version_repo.update(version)
         except Exception as exc:

@@ -57,7 +57,7 @@ class TestAgentFactories:
         agent = create_developer_agent("openai/gpt-4o")
         assert isinstance(agent, Agent)
         assert agent.name == "developer"
-        assert agent._output_type is PageOutputSummary
+        assert agent._output_type is None  # no structured output — files written via tools
         # Has tools registered
         assert len(agent._tools.definitions) >= 3
 

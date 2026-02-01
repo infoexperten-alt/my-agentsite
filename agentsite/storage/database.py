@@ -40,6 +40,7 @@ CREATE TABLE IF NOT EXISTS versions (
     status TEXT NOT NULL DEFAULT 'generating',
     prompt TEXT NOT NULL DEFAULT '',
     usage TEXT DEFAULT '{}',
+    files TEXT DEFAULT '{}',
     error TEXT,
     created_at TEXT NOT NULL,
     completed_at TEXT,
@@ -149,6 +150,14 @@ class Database:
         else:
             # No old schema or already migrated — just clean up legacy tables
             await self._conn.executescript(MIGRATION_SQL)
+            await self._conn.commit()
+
+        # Add files column to versions table if missing (incremental migration)
+        cursor = await self._conn.execute("PRAGMA table_info(versions)")
+        version_columns = {row[1] for row in await cursor.fetchall()}
+        if version_columns and "files" not in version_columns:
+            logger.info("Adding 'files' column to versions table...")
+            await self._conn.execute("ALTER TABLE versions ADD COLUMN files TEXT DEFAULT '{}'")
             await self._conn.commit()
 
     async def _seed_agent_configs(self) -> None:

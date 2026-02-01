@@ -181,8 +181,8 @@ class VersionRepository:
     async def create(self, version: PageVersion) -> PageVersion:
         """Insert a new version."""
         await self._db.conn.execute(
-            """INSERT INTO versions (id, page_id, version_number, status, prompt, usage, error, created_at, completed_at)
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+            """INSERT INTO versions (id, page_id, version_number, status, prompt, usage, files, error, created_at, completed_at)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
             (
                 version.id,
                 version.page_id,
@@ -190,6 +190,7 @@ class VersionRepository:
                 version.status,
                 version.prompt,
                 json.dumps(version.usage),
+                json.dumps(version.files),
                 version.error,
                 version.created_at,
                 version.completed_at,
@@ -248,10 +249,11 @@ class VersionRepository:
     async def update(self, version: PageVersion) -> None:
         """Update a version record."""
         await self._db.conn.execute(
-            """UPDATE versions SET status=?, usage=?, error=?, completed_at=? WHERE id=?""",
+            """UPDATE versions SET status=?, usage=?, files=?, error=?, completed_at=? WHERE id=?""",
             (
                 version.status,
                 json.dumps(version.usage),
+                json.dumps(version.files),
                 version.error,
                 version.completed_at,
                 version.id,
@@ -268,6 +270,7 @@ class VersionRepository:
             status=row["status"],
             prompt=row["prompt"],
             usage=json.loads(row["usage"]) if row["usage"] else {},
+            files=json.loads(row["files"]) if row["files"] else {},
             error=row["error"],
             created_at=row["created_at"],
             completed_at=row["completed_at"],

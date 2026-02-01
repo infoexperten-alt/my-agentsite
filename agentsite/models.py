@@ -138,6 +138,7 @@ class PageVersion(BaseModel):
     status: str = Field(default="generating")  # generating, completed, failed
     prompt: str = Field(default="")
     usage: dict = Field(default_factory=dict)
+    files: dict = Field(default_factory=dict)
     error: str | None = Field(default=None)
     created_at: str = Field(default_factory=lambda: datetime.now(timezone.utc).isoformat())
     completed_at: str | None = Field(default=None)
