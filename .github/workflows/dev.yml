@@ -32,10 +32,10 @@ jobs:
         run: |
           set -euo pipefail
           # latest release tag (no pre-release), e.g. v1.0.1
-          last_release="$(git tag -l 'v[0-9]*.[0-9]*.[0-9]*' | grep -E '^v[0-9]+\.[0-9]+\.[0-9]+$' | sort -V | tail -1)"
+          last_release="$(git tag -l 'v[0-9]*.[0-9]*.[0-9]*' | grep -E '^v[0-9]+\.[0-9]+\.[0-9]+$' | sort -V | tail -1)" || true
           if [[ -z "${last_release}" ]]; then
             base="0.1.0"  # bootstrap if no tags yet
-            else
+          else
             v="${last_release#v}"
             IFS=. read -r MA MI PA <<< "${v}"
             PA=$((PA+1))
