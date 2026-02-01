@@ -29,6 +29,6 @@ def sample_project():
     """Create a sample project for testing."""
     return Project(
         name="Test Portfolio",
-        prompt="A portfolio website for a photographer",
+        description="A portfolio website for a photographer",
         model="openai/gpt-4o",
     )

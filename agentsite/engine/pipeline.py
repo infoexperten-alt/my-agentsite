@@ -12,14 +12,43 @@ from prompture import GroupCallbacks, GroupResult
 
 from ..agents.orchestrator import create_pipeline
 from ..config import settings
-from ..models import GeneratedFile, PageOutput, Project, ProjectStatus, SitePlan, StyleSpec, WSEvent
+from ..models import GeneratedFile, PageOutput, Project, StyleSpec, WSEvent
 from .project_manager import ProjectManager
 
 logger = logging.getLogger("agentsite.pipeline")
 
 
+def _patch_pipeline_deps(group: Any, deps: Any) -> None:
+    """Monkey-patch every agent in a group so ``deps`` is always forwarded.
+
+    ``SequentialGroup.run()`` and ``LoopGroup.run()`` call
+    ``agent.run(prompt)`` without passing ``deps``, which means tools
+    that rely on ``RunContext.deps`` receive ``None``.  This helper
+    walks the group tree and wraps each agent's ``run`` method so that
+    ``deps`` is injected automatically.
+    """
+    agents = getattr(group, "_agents", [])
+    for item in agents:
+        agent = item[0] if isinstance(item, tuple) else item
+        # Recurse into nested groups (LoopGroup inside SequentialGroup)
+        if hasattr(agent, "_agents"):
+            _patch_pipeline_deps(agent, deps)
+        else:
+            _wrap_agent_run(agent, deps)
+
+
+def _wrap_agent_run(agent: Any, deps: Any) -> None:
+    original_run = agent.run
+
+    def _patched_run(prompt: str, **kwargs: Any) -> Any:
+        kwargs.setdefault("deps", deps)
+        return original_run(prompt, **kwargs)
+
+    agent.run = _patched_run
+
+
 class GenerationPipeline:
-    """Orchestrates the full site generation process.
+    """Orchestrates the generation process for a single page version.
 
     Bridges the Prompture agent pipeline with the project filesystem
     and optional WebSocket event callbacks.
@@ -39,19 +68,29 @@ class GenerationPipeline:
         if self._on_event:
             self._on_event(WSEvent(type=event_type, agent=agent, data=data))
 
-    def generate(self, project: Project) -> GroupResult:
-        """Run the full generation pipeline for a project.
+    def generate(
+        self,
+        project: Project,
+        *,
+        slug: str,
+        version_number: int,
+        page_prompt: str,
+    ) -> GroupResult:
+        """Run the generation pipeline for a single page version.
 
         Args:
-            project: Project with prompt and model set.
+            project: The parent project.
+            slug: Page slug (e.g. "home", "about").
+            version_number: Version number to write to.
+            page_prompt: The prompt describing what to build for this page.
 
         Returns:
             GroupResult from the Prompture pipeline.
         """
         model = project.model or settings.default_model
-        project_dir = self._pm.project_dir(project.id)
-        site_dir = self._pm.site_dir(project.id)
-        site_dir.mkdir(parents=True, exist_ok=True)
+
+        # Ensure the version directory exists
+        version_dir = self._pm.ensure_version_dir(project.id, slug, version_number)
 
         # Track written files for WS events
         written_files: list[str] = []
@@ -79,60 +118,60 @@ class GenerationPipeline:
         # Create pipeline
         pipeline = create_pipeline(model, callbacks=group_callbacks)
 
-        # Inject project dir as dependency via shared state
-        pipeline._state["prompt"] = project.prompt
-        pipeline._state["project_dir"] = project_dir
+        # Inject state — page-scoped prompt
+        pipeline._state["prompt"] = page_prompt
+        pipeline._state["project_dir"] = self._pm.project_dir(project.id)
         pipeline._state["review_feedback"] = ""
 
         # Inject deps for tools (they read from RunContext.deps)
-        # The LoopGroup and inner agents get deps from their context
-        # We set the state so prompts can be templated
         deps = {
-            "project_dir": project_dir,
+            "project_dir": self._pm.project_dir(project.id),
+            "version_dir": version_dir,
             "on_file_written": _on_file_written,
             "written_files": written_files,
         }
 
-        self._emit("phase_start", data={"phase": "planning"})
+        # Patch all agents so deps is forwarded
+        _patch_pipeline_deps(pipeline, deps)
 
-        # Update project status
-        project.status = ProjectStatus.generating
-        self._pm.save_metadata(project)
+        self._emit("phase_start", data={"phase": "planning", "slug": slug, "version": version_number})
 
         try:
-            result = pipeline.run(project.prompt)
+            result = pipeline.run(page_prompt)
 
             # Extract structured outputs from shared state
             state = result.shared_state
-            site_plan_text = state.get("site_plan", "")
-            style_spec_text = state.get("style_spec", "")
             page_output_text = state.get("page_output", "")
 
             # Write files from the developer's PageOutput if tools weren't used
             if page_output_text and not written_files:
-                self._write_files_from_output(project.id, page_output_text)
-
-            # Update project metadata
-            project.status = ProjectStatus.completed
-            project.usage = result.aggregate_usage
-            self._pm.save_metadata(project)
+                self._write_files_from_output(project.id, slug, version_number, page_output_text)
 
             self._emit("generation_complete", data={
                 "success": result.success,
-                "files": self._pm.list_site_files(project.id),
+                "slug": slug,
+                "version": version_number,
+                "files": self._pm.list_version_files(project.id, slug, version_number),
                 "usage": result.aggregate_usage,
             })
 
             return result
 
         except Exception as exc:
-            logger.exception("Generation failed for project %s", project.id)
-            project.status = ProjectStatus.failed
-            self._pm.save_metadata(project)
+            logger.exception("Generation failed for project %s page %s v%d", project.id, slug, version_number)
             self._emit("error", data={"message": str(exc)})
+            self._emit("generation_complete", data={
+                "success": False,
+                "slug": slug,
+                "version": version_number,
+                "files": [],
+                "error": str(exc),
+            })
             raise
 
-    def _write_files_from_output(self, project_id: str, output_text: str) -> None:
+    def _write_files_from_output(
+        self, project_id: str, slug: str, version: int, output_text: str
+    ) -> None:
         """Parse PageOutput JSON from output text and write files."""
         try:
             from prompture import clean_json_text
@@ -141,6 +180,6 @@ class GenerationPipeline:
             data = json.loads(cleaned)
             page_output = PageOutput.model_validate(data)
             for f in page_output.files:
-                self._pm.write_site_file(project_id, f.path, f.content)
+                self._pm.write_version_file(project_id, slug, version, f.path, f.content)
         except Exception:
             logger.debug("Could not parse PageOutput from text, files may have been written via tools")

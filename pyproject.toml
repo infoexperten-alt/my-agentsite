@@ -15,7 +15,7 @@ classifiers = [
     "Operating System :: OS Independent",
 ]
 dependencies = [
-    "prompture>=0.0.38",
+    "prompture>=0.0.40",
     "fastapi>=0.100",
     "uvicorn[standard]>=0.20",
     "aiosqlite>=0.19",

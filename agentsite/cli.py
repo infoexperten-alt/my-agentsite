@@ -40,8 +40,9 @@ def serve(host: str | None, port: int | None, reload: bool):
 @click.option("--model", "-m", default=None, help="Model to use (provider/model)")
 @click.option("--output", "-o", default=None, help="Output directory")
 @click.option("--name", "-n", default=None, help="Project name")
-def generate(prompt: str, model: str | None, output: str | None, name: str | None):
-    """Generate a website from a text prompt.
+@click.option("--page", "-p", default="home", help="Page slug (default: home)")
+def generate(prompt: str, model: str | None, output: str | None, name: str | None, page: str):
+    """Generate a website page from a text prompt.
 
     Example: agentsite generate "A portfolio website for a photographer"
     """
@@ -58,6 +59,7 @@ def generate(prompt: str, model: str | None, output: str | None, name: str | Non
 
     click.echo(f"Generating: {project_name}")
     click.echo(f"Model: {effective_model}")
+    click.echo(f"Page: {page}")
     click.echo()
 
     # Create project
@@ -66,10 +68,9 @@ def generate(prompt: str, model: str | None, output: str | None, name: str | Non
     else:
         pm = ProjectManager()
 
-    project = Project(name=project_name, prompt=prompt, model=effective_model)
+    project = Project(name=project_name, model=effective_model)
 
     if output:
-        # Override project dir if custom output
         from pathlib import Path as P
 
         out_path = P(output)
@@ -98,14 +99,18 @@ def generate(prompt: str, model: str | None, output: str | None, name: str | Non
     pipeline = GenerationPipeline(pm, on_event=_on_event)
 
     try:
-        result = pipeline.generate(project)
-        project_dir = pm.project_dir(project.id)
-        site_dir = pm.site_dir(project.id)
+        result = pipeline.generate(
+            project,
+            slug=page,
+            version_number=1,
+            page_prompt=prompt,
+        )
+        version_dir = pm.version_dir(project.id, page, 1)
 
         click.echo()
-        click.echo(f"Output: {site_dir}")
+        click.echo(f"Output: {version_dir}")
 
-        files = pm.list_site_files(project.id)
+        files = pm.list_version_files(project.id, page, 1)
         if files:
             click.echo("Files:")
             for f in files:

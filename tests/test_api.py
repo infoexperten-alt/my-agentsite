@@ -9,7 +9,7 @@ from agentsite.api import deps
 from agentsite.api.app import create_app
 from agentsite.engine.project_manager import ProjectManager
 from agentsite.storage.database import Database
-from agentsite.storage.repository import ProjectRepository
+from agentsite.storage.repository import PageRepository, ProjectRepository, VersionRepository
 
 
 @pytest.fixture
@@ -22,6 +22,8 @@ async def client(tmp_path):
 
     await deps.db.connect()
     deps.project_repo = ProjectRepository(deps.db)
+    deps.page_repo = PageRepository(deps.db)
+    deps.version_repo = VersionRepository(deps.db)
 
     app = create_app()
     transport = ASGITransport(app=app)
@@ -46,7 +48,7 @@ class TestProjectEndpoints:
     async def test_create_project(self, client):
         resp = await client.post(
             "/api/projects",
-            json={"name": "Test", "prompt": "Build a portfolio"},
+            json={"name": "Test", "description": "Build a portfolio"},
         )
         assert resp.status_code == 200
         data = resp.json()
@@ -87,19 +89,74 @@ class TestProjectEndpoints:
         resp = await client.get(f"/api/projects/{project_id}")
         assert resp.status_code == 404
 
+
+class TestPageEndpoints:
     @pytest.mark.asyncio
-    async def test_list_files_empty(self, client):
-        create_resp = await client.post("/api/projects", json={"name": "Files Test"})
+    async def test_create_page(self, client):
+        create_resp = await client.post("/api/projects", json={"name": "Page Test"})
         project_id = create_resp.json()["id"]
 
-        resp = await client.get(f"/api/projects/{project_id}/files")
+        resp = await client.post(
+            f"/api/projects/{project_id}/pages",
+            json={"slug": "home", "title": "Home Page"},
+        )
         assert resp.status_code == 200
-        assert resp.json()["files"] == []
+        data = resp.json()
+        assert data["slug"] == "home"
+        assert data["title"] == "Home Page"
 
+    @pytest.mark.asyncio
+    async def test_list_pages(self, client):
+        create_resp = await client.post("/api/projects", json={"name": "Page List"})
+        project_id = create_resp.json()["id"]
+
+        await client.post(f"/api/projects/{project_id}/pages", json={"slug": "home"})
+        await client.post(f"/api/projects/{project_id}/pages", json={"slug": "about"})
+
+        resp = await client.get(f"/api/projects/{project_id}/pages")
+        assert resp.status_code == 200
+        data = resp.json()
+        assert len(data) == 2
+
+    @pytest.mark.asyncio
+    async def test_get_page(self, client):
+        create_resp = await client.post("/api/projects", json={"name": "Page Get"})
+        project_id = create_resp.json()["id"]
+
+        await client.post(f"/api/projects/{project_id}/pages", json={"slug": "contact"})
+
+        resp = await client.get(f"/api/projects/{project_id}/pages/contact")
+        assert resp.status_code == 200
+        assert resp.json()["slug"] == "contact"
+
+    @pytest.mark.asyncio
+    async def test_delete_page(self, client):
+        create_resp = await client.post("/api/projects", json={"name": "Page Delete"})
+        project_id = create_resp.json()["id"]
+
+        await client.post(f"/api/projects/{project_id}/pages", json={"slug": "temp"})
+
+        resp = await client.delete(f"/api/projects/{project_id}/pages/temp")
+        assert resp.status_code == 200
+
+        resp = await client.get(f"/api/projects/{project_id}/pages/temp")
+        assert resp.status_code == 404
+
+    @pytest.mark.asyncio
+    async def test_duplicate_slug_rejected(self, client):
+        create_resp = await client.post("/api/projects", json={"name": "Dup Test"})
+        project_id = create_resp.json()["id"]
+
+        await client.post(f"/api/projects/{project_id}/pages", json={"slug": "home"})
+        resp = await client.post(f"/api/projects/{project_id}/pages", json={"slug": "home"})
+        assert resp.status_code == 409
+
+
+class TestGenerationEndpoint:
     @pytest.mark.asyncio
     async def test_generate_requires_prompt(self, client):
         create_resp = await client.post("/api/projects", json={"name": "Gen Test"})
         project_id = create_resp.json()["id"]
 
-        resp = await client.post(f"/api/projects/{project_id}/generate", json={})
+        resp = await client.post(f"/api/projects/{project_id}/pages/home/generate", json={})
         assert resp.status_code == 400

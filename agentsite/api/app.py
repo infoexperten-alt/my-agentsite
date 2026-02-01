@@ -6,20 +6,32 @@ import logging
 from contextlib import asynccontextmanager
 from pathlib import Path
 
-from fastapi import FastAPI
+from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 
 from ..config import settings
 from . import deps
-from .routes import assets, generate, models, preview, projects
+from .routes import assets, generate, models, preview, projects, providers
 from .websocket import ws_manager
 
 logger = logging.getLogger("agentsite.api")
 
+# Prefer the built frontend (Vite output), fall back to source frontend dir
+_pkg_frontend_dist = Path(__file__).resolve().parent.parent.parent / "frontend" / "dist"
+_cwd_frontend_dist = Path.cwd() / "frontend" / "dist"
 _pkg_frontend = Path(__file__).resolve().parent.parent.parent / "frontend"
 _cwd_frontend = Path.cwd() / "frontend"
-FRONTEND_DIR = _pkg_frontend if _pkg_frontend.exists() else _cwd_frontend
+
+if _pkg_frontend_dist.exists():
+    FRONTEND_DIR = _pkg_frontend_dist
+elif _cwd_frontend_dist.exists():
+    FRONTEND_DIR = _cwd_frontend_dist
+elif _pkg_frontend.exists():
+    FRONTEND_DIR = _pkg_frontend
+else:
+    FRONTEND_DIR = _cwd_frontend
 
 
 @asynccontextmanager
@@ -28,6 +40,8 @@ async def lifespan(app: FastAPI):
     settings.ensure_dirs()
     await deps.db.connect()
     deps.project_repo = deps.ProjectRepository(deps.db)
+    deps.page_repo = deps.PageRepository(deps.db)
+    deps.version_repo = deps.VersionRepository(deps.db)
     logger.info("AgentSite started — data dir: %s", settings.data_dir)
     yield
     await deps.db.close()
@@ -58,9 +72,28 @@ def create_app() -> FastAPI:
     app.include_router(models.router)
     app.include_router(assets.router)
     app.include_router(preview.router)
+    app.include_router(providers.router)
 
     # Serve frontend static files
     if FRONTEND_DIR.exists():
-        app.mount("/", StaticFiles(directory=str(FRONTEND_DIR), html=True), name="frontend")
+        app.mount("/static", StaticFiles(directory=str(FRONTEND_DIR)), name="frontend-static")
+
+        @app.get("/{full_path:path}")
+        async def spa_fallback(full_path: str):
+            """Serve static files or fall back to index.html for SPA routing."""
+            if full_path.startswith(("api/", "ws/", "preview/")):
+                raise HTTPException(status_code=404)
+
+            # Try serving the exact file first
+            file_path = FRONTEND_DIR / full_path
+            if full_path and file_path.is_file():
+                return FileResponse(file_path)
+
+            # Fall back to index.html for client-side routing
+            index = FRONTEND_DIR / "index.html"
+            if index.exists():
+                return FileResponse(index)
+
+            raise HTTPException(status_code=404)
 
     return app

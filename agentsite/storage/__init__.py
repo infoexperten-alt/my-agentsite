@@ -1,6 +1,6 @@
 """AgentSite storage — SQLite database and data access layer."""
 
 from .database import Database
-from .repository import ProjectRepository
+from .repository import PageRepository, ProjectRepository, VersionRepository
 
-__all__ = ["Database", "ProjectRepository"]
+__all__ = ["Database", "PageRepository", "ProjectRepository", "VersionRepository"]

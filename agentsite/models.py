@@ -1,15 +1,13 @@
 """Domain models for AgentSite.
 
 All structured output types used by the agent pipeline, plus the
-Project model for persistence.
+persistence models for Project, Page, and PageVersion.
 """
 
 from __future__ import annotations
 
 import uuid
 from datetime import datetime, timezone
-from enum import Enum
-
 from pydantic import BaseModel, Field
 
 
@@ -78,32 +76,46 @@ class ReviewFeedback(BaseModel):
 
 
 # ------------------------------------------------------------------
-# Project model (persistence)
+# Persistence models
 # ------------------------------------------------------------------
 
 
-class ProjectStatus(str, Enum):
-    """Lifecycle status of a project."""
-
-    created = "created"
-    generating = "generating"
-    completed = "completed"
-    failed = "failed"
-
-
 class Project(BaseModel):
-    """Persistent project record."""
+    """Persistent project record — top-level container with branding."""
 
     id: str = Field(default_factory=lambda: uuid.uuid4().hex[:12])
     name: str = Field(default="Untitled Project")
-    prompt: str = Field(default="")
+    description: str = Field(default="")
     model: str = Field(default="")
-    status: ProjectStatus = Field(default=ProjectStatus.created)
-    site_plan: SitePlan | None = Field(default=None)
     style_spec: StyleSpec | None = Field(default=None)
     created_at: str = Field(default_factory=lambda: datetime.now(timezone.utc).isoformat())
     updated_at: str = Field(default_factory=lambda: datetime.now(timezone.utc).isoformat())
+
+
+class Page(BaseModel):
+    """A page within a project."""
+
+    id: str = Field(default_factory=lambda: uuid.uuid4().hex[:12])
+    project_id: str = Field(default="")
+    slug: str = Field(default="home")
+    title: str = Field(default="Home Page")
+    prompt: str = Field(default="")
+    created_at: str = Field(default_factory=lambda: datetime.now(timezone.utc).isoformat())
+    updated_at: str = Field(default_factory=lambda: datetime.now(timezone.utc).isoformat())
+
+
+class PageVersion(BaseModel):
+    """A versioned output for a page."""
+
+    id: str = Field(default_factory=lambda: uuid.uuid4().hex[:12])
+    page_id: str = Field(default="")
+    version_number: int = Field(default=1)
+    status: str = Field(default="generating")  # generating, completed, failed
+    prompt: str = Field(default="")
     usage: dict = Field(default_factory=dict)
+    error: str | None = Field(default=None)
+    created_at: str = Field(default_factory=lambda: datetime.now(timezone.utc).isoformat())
+    completed_at: str | None = Field(default=None)
 
 
 # ------------------------------------------------------------------

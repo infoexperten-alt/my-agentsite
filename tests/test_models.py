@@ -2,10 +2,11 @@
 
 from agentsite.models import (
     GeneratedFile,
+    Page,
     PageOutput,
     PagePlan,
+    PageVersion,
     Project,
-    ProjectStatus,
     ReviewFeedback,
     SitePlan,
     StyleSpec,
@@ -87,16 +88,43 @@ class TestProject:
         assert p1.id != p2.id
         assert len(p1.id) == 12
 
-    def test_default_status(self):
+    def test_defaults(self):
         p = Project()
-        assert p.status == ProjectStatus.created
+        assert p.name == "Untitled Project"
+        assert p.description == ""
+        assert p.model == ""
+        assert p.style_spec is None
 
     def test_json_roundtrip(self):
-        p = Project(name="Test", prompt="Build a site", model="openai/gpt-4o")
+        p = Project(name="Test", description="Build a site", model="openai/gpt-4o")
         json_str = p.model_dump_json()
         restored = Project.model_validate_json(json_str)
         assert restored.name == "Test"
         assert restored.id == p.id
+
+
+class TestPage:
+    def test_auto_id(self):
+        p = Page(project_id="abc", slug="home", title="Home Page")
+        assert len(p.id) == 12
+        assert p.project_id == "abc"
+
+    def test_defaults(self):
+        p = Page()
+        assert p.slug == "home"
+        assert p.title == "Home Page"
+
+
+class TestPageVersion:
+    def test_defaults(self):
+        v = PageVersion(page_id="xyz", version_number=1)
+        assert v.status == "generating"
+        assert v.usage == {}
+        assert v.error is None
+
+    def test_completed(self):
+        v = PageVersion(page_id="xyz", version_number=2, status="completed")
+        assert v.status == "completed"
 
 
 class TestWSEvent:

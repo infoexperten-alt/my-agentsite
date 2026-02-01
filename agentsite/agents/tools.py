@@ -10,19 +10,18 @@ from prompture import RunContext
 
 
 def write_file(ctx: RunContext, path: str, content: str) -> str:
-    """Write content to a file within the project directory.
+    """Write content to a file within the project version directory.
 
     Args:
-        path: Relative file path within the project site directory.
+        path: Relative file path within the version directory.
         content: Full file content to write.
     """
-    project_dir: Path = ctx.deps["project_dir"]
-    site_dir = project_dir / "site"
-    target = site_dir / path
+    version_dir: Path = ctx.deps["version_dir"]
+    target = version_dir / path
 
     # Prevent path traversal
     try:
-        target.resolve().relative_to(site_dir.resolve())
+        target.resolve().relative_to(version_dir.resolve())
     except ValueError:
         return f"Error: path '{path}' escapes project directory"
 
@@ -43,17 +42,16 @@ def write_file(ctx: RunContext, path: str, content: str) -> str:
 
 
 def read_file(ctx: RunContext, path: str) -> str:
-    """Read a file from the project directory.
+    """Read a file from the project version directory.
 
     Args:
-        path: Relative file path within the project site directory.
+        path: Relative file path within the version directory.
     """
-    project_dir: Path = ctx.deps["project_dir"]
-    site_dir = project_dir / "site"
-    target = site_dir / path
+    version_dir: Path = ctx.deps["version_dir"]
+    target = version_dir / path
 
     try:
-        target.resolve().relative_to(site_dir.resolve())
+        target.resolve().relative_to(version_dir.resolve())
     except ValueError:
         return f"Error: path '{path}' escapes project directory"
 
@@ -64,14 +62,13 @@ def read_file(ctx: RunContext, path: str) -> str:
 
 
 def list_files(ctx: RunContext) -> str:
-    """List all files in the project site directory."""
-    project_dir: Path = ctx.deps["project_dir"]
-    site_dir = project_dir / "site"
+    """List all files in the project version directory."""
+    version_dir: Path = ctx.deps["version_dir"]
 
-    if not site_dir.exists():
+    if not version_dir.exists():
         return "No files generated yet."
 
-    files = sorted(str(f.relative_to(site_dir)) for f in site_dir.rglob("*") if f.is_file())
+    files = sorted(str(f.relative_to(version_dir)) for f in version_dir.rglob("*") if f.is_file())
     if not files:
         return "No files generated yet."
 
