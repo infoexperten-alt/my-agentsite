@@ -11,7 +11,7 @@ from typing import Any
 
 from prompture import GroupCallbacks, GroupResult, SequentialGroup
 
-from ..agents.orchestrator import create_dynamic_pipeline
+from ..agents.orchestrator import _agent_model, create_dynamic_pipeline
 from ..config import settings
 from ..models import AgentConfig, AgentRun, PageOutput, Project, SitePlan, StyleSpec, WSEvent
 from .gemini_patch import apply_gemini_patch
@@ -106,6 +106,7 @@ class GenerationPipeline:
         self._run_start_times: dict[str, float] = {}
         self._developer_output_text: str = ""  # direct capture from callback
         self._developer_tool_calls: list[dict] = []  # tool calls from developer agent
+        self._agent_models: dict[str, str] = {}  # agent_key -> resolved model name
 
     def _emit(self, event_type: str, agent: str = "", data: dict[str, Any] | None = None) -> None:
         """Fire a WebSocket event if a callback is registered."""
@@ -146,7 +147,8 @@ class GenerationPipeline:
         def _on_agent_start(name: str, prompt: str) -> None:
             agent_key = _agent_name_to_key(name)
             started_at = datetime.now(timezone.utc).isoformat()
-            self._emit("agent_start", agent=agent_key, data={"started_at": started_at})
+            agent_model = self._agent_models.get(agent_key, "")
+            self._emit("agent_start", agent=agent_key, data={"started_at": started_at, "model": agent_model})
             run = AgentRun(
                 project_id=project.id,
                 page_slug=slug,
@@ -207,6 +209,7 @@ class GenerationPipeline:
                             ", ".join(f"{k}=...({len(str(v))})" for k, v in (tc.get("arguments") or {}).items()),
                         )
 
+            agent_model = self._agent_models.get(agent_key, "")
             self._emit(
                 "agent_complete",
                 agent=agent_key,
@@ -216,6 +219,7 @@ class GenerationPipeline:
                     "input_tokens": input_tokens,
                     "output_tokens": output_tokens,
                     "tool_calls_count": len(tool_calls),
+                    "model": agent_model,
                 },
             )
 
@@ -249,11 +253,14 @@ class GenerationPipeline:
         self._emit("phase_start", data={"phase": "planning", "slug": slug, "version": version_number})
 
         try:
-            # --- Phase A: Run PM agent standalone to get SitePlan ---
-            from ..agents.orchestrator import _agent_model
+            # --- Resolve model for each agent and store for WS events ---
             from ..agents.pm import create_pm_agent
 
-            pm_model = _agent_model("pm", model, self._agent_configs)
+            for agent_key in ("pm", "designer", "developer", "reviewer"):
+                self._agent_models[agent_key] = _agent_model(agent_key, model, self._agent_configs)
+
+            # --- Phase A: Run PM agent standalone to get SitePlan ---
+            pm_model = self._agent_models["pm"]
             pm_agent = create_pm_agent(pm_model)
 
             pm_callbacks = GroupCallbacks(
@@ -268,8 +275,26 @@ class GenerationPipeline:
             )
             _patch_pipeline_deps(pm_pipeline, deps)
 
-            pm_result = pm_pipeline.run(page_prompt)
-            site_plan_text = pm_result.shared_state.get("site_plan", "")
+            try:
+                pm_result = pm_pipeline.run(page_prompt)
+                site_plan_text = pm_result.shared_state.get("site_plan", "")
+            except Exception as pm_exc:
+                # Fallback: retry PM without structured output (for models like Kimi K2.5)
+                logger.warning(
+                    "PM agent failed with structured output, retrying in plain text mode: %s",
+                    pm_exc,
+                )
+                from ..agents.pm import create_pm_agent_plain
+
+                pm_agent_plain = create_pm_agent_plain(pm_model)
+                pm_pipeline_plain = SequentialGroup(
+                    [(pm_agent_plain, "{prompt}")],
+                    callbacks=pm_callbacks,
+                    state={"prompt": page_prompt},
+                )
+                _patch_pipeline_deps(pm_pipeline_plain, deps)
+                pm_result = pm_pipeline_plain.run(page_prompt)
+                site_plan_text = pm_result.shared_state.get("site_plan", "")
 
             # Parse required_agents from the PM output
             required_agents = ["designer", "developer", "reviewer"]  # default
@@ -289,8 +314,7 @@ class GenerationPipeline:
             all_agents = ["pm"] + [a for a in required_agents]
             self._emit("pipeline_plan", data={"required_agents": all_agents})
 
-            # --- Phase B: Build dynamic pipeline for remaining agents ---
-            # If designer is skipped, inject a default style_spec
+            # --- Phase B: Run Designer standalone (with fallback) if needed ---
             initial_state = {
                 "prompt": page_prompt,
                 "site_plan": site_plan_text,
@@ -299,15 +323,76 @@ class GenerationPipeline:
                 "logo_url": project.logo_url or "",
                 "icon_url": project.icon_url or "",
             }
-            if "designer" not in required_agents:
+
+            if "designer" in required_agents:
+                from prompture import clean_json_text
+
+                from ..agents.designer import create_designer_agent, create_designer_agent_plain
+
+                designer_model = self._agent_models["designer"]
+                designer_agent = create_designer_agent(designer_model)
+                designer_prompt = (
+                    "Design a visual style for this website:\n\n"
+                    f"Site Plan: {site_plan_text}\n\n"
+                    f"Logo URL: {project.logo_url or ''}\n"
+                    f"Icon URL: {project.icon_url or ''}\n\n"
+                    "Create a cohesive color scheme, typography, and spacing system."
+                )
+
+                designer_callbacks = GroupCallbacks(
+                    on_agent_start=_on_agent_start,
+                    on_agent_complete=_on_agent_complete,
+                    on_agent_error=_on_agent_error,
+                )
+
+                try:
+                    designer_pipeline = SequentialGroup(
+                        [(designer_agent, "{designer_prompt}")],
+                        callbacks=designer_callbacks,
+                        state={"designer_prompt": designer_prompt},
+                    )
+                    _patch_pipeline_deps(designer_pipeline, deps)
+                    designer_result = designer_pipeline.run(designer_prompt)
+                    style_spec_text = designer_result.shared_state.get("style_spec", "")
+                except Exception as designer_exc:
+                    # Fallback: retry Designer without structured output
+                    logger.warning(
+                        "Designer agent failed with structured output, retrying in plain text mode: %s",
+                        designer_exc,
+                    )
+                    designer_agent_plain = create_designer_agent_plain(designer_model)
+                    designer_pipeline_plain = SequentialGroup(
+                        [(designer_agent_plain, "{designer_prompt}")],
+                        callbacks=designer_callbacks,
+                        state={"designer_prompt": designer_prompt},
+                    )
+                    _patch_pipeline_deps(designer_pipeline_plain, deps)
+                    designer_result = designer_pipeline_plain.run(designer_prompt)
+                    style_spec_text = designer_result.shared_state.get("style_spec", "")
+
+                initial_state["style_spec"] = style_spec_text
+
+                # Merge designer usage into pm_result for later aggregation
+                if hasattr(designer_result, 'aggregate_usage'):
+                    if not hasattr(pm_result, 'aggregate_usage'):
+                        pm_result.aggregate_usage = {}
+                    for k, v in designer_result.aggregate_usage.items():
+                        if isinstance(v, (int, float)):
+                            pm_result.aggregate_usage[k] = pm_result.aggregate_usage.get(k, 0) + v
+
+                # Remove designer from remaining pipeline since we ran it here
+                remaining_agents = [a for a in required_agents if a != "designer"]
+            else:
+                remaining_agents = list(required_agents)
                 # Use project's existing style_spec or sensible defaults
                 if project.style_spec:
                     initial_state["style_spec"] = project.style_spec.model_dump_json()
                 else:
                     initial_state["style_spec"] = StyleSpec().model_dump_json()
 
+            # --- Phase C: Build dynamic pipeline for developer+reviewer ---
             remaining_pipeline = create_dynamic_pipeline(
-                required_agents,
+                remaining_agents,
                 model,
                 callbacks=group_callbacks,
                 agent_configs=self._agent_configs,
@@ -323,6 +408,68 @@ class GenerationPipeline:
 
             # Merge nested group state back so we can access page_output
             _merge_nested_group_state(remaining_pipeline)
+
+            # Detect developer failure: Prompture's SequentialGroup catches
+            # agent errors internally (doesn't re-raise), so check for a
+            # failed result with no files and no developer output.
+            _dev_failed = (
+                not result.success
+                or (
+                    not written_files
+                    and not self._developer_output_text
+                    and not self._developer_tool_calls
+                )
+            )
+            if _dev_failed and not written_files:
+                dev_errors = [
+                    e for e in getattr(result, "errors", [])
+                    if getattr(e, "agent_name", "") in ("developer", "agentsite_developer")
+                ]
+                logger.warning(
+                    "Developer pipeline produced no output (success=%s, errors=%d, "
+                    "written_files=%d, dev_output_len=%d, tool_calls=%d). "
+                    "Retrying with plain text developer.",
+                    result.success,
+                    len(dev_errors),
+                    len(written_files),
+                    len(self._developer_output_text),
+                    len(self._developer_tool_calls),
+                )
+                from ..agents.developer import create_developer_agent_plain
+
+                dev_model = self._agent_models["developer"]
+                dev_agent_plain = create_developer_agent_plain(dev_model)
+
+                dev_prompt = (
+                    "Build the website page based on this plan:\n\n"
+                    f"Site Plan: {initial_state['site_plan']}\n\n"
+                    f"Style Spec: {initial_state.get('style_spec', '')}\n\n"
+                    f"Logo URL: {initial_state.get('logo_url', '')}\n"
+                    f"Icon URL: {initial_state.get('icon_url', '')}\n\n"
+                    "Generate complete, self-contained HTML with inline or linked CSS/JS."
+                )
+
+                dev_callbacks = GroupCallbacks(
+                    on_agent_start=_on_agent_start,
+                    on_agent_complete=_on_agent_complete,
+                    on_agent_error=_on_agent_error,
+                )
+                dev_pipeline_plain = SequentialGroup(
+                    [(dev_agent_plain, "{dev_prompt}")],
+                    callbacks=dev_callbacks,
+                    state={"dev_prompt": dev_prompt},
+                )
+                _patch_pipeline_deps(dev_pipeline_plain, deps)
+                plain_result = dev_pipeline_plain.run(dev_prompt)
+
+                # Use the plain result's usage and state
+                if hasattr(plain_result, 'aggregate_usage'):
+                    if not hasattr(result, 'aggregate_usage'):
+                        result.aggregate_usage = {}
+                    for k, v in plain_result.aggregate_usage.items():
+                        if isinstance(v, (int, float)):
+                            result.aggregate_usage[k] = result.aggregate_usage.get(k, 0) + v
+                result = plain_result
 
             # Merge usage from both phases
             combined_usage = pm_result.aggregate_usage.copy() if hasattr(pm_result, 'aggregate_usage') else {}
