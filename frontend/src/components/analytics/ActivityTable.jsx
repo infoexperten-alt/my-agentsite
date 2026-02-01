@@ -1,55 +1,51 @@
 import { useState } from "react";
 import { MagnifyingGlass } from "@phosphor-icons/react";
 
-const MOCK_DATA = [
-  {
-    timestamp: "Oct 24, 10:42:05",
-    project: "Portfolio Dark Mode",
-    agent: "Developer",
-    agentColor: "bg-blue-500/10 text-blue-400 border-blue-500/20",
-    model: "claude-3-sonnet",
-    tokens: "4,205",
-    cost: "$0.063",
-  },
-  {
-    timestamp: "Oct 24, 10:41:12",
-    project: "Portfolio Dark Mode",
-    agent: "Designer",
-    agentColor: "bg-pink-500/10 text-pink-400 border-pink-500/20",
-    model: "gpt-4o",
-    tokens: "1,100",
-    cost: "$0.015",
-  },
-  {
-    timestamp: "Oct 24, 10:39:55",
-    project: "SaaS Landing",
-    agent: "PM Agent",
-    agentColor: "bg-orange-500/10 text-orange-400 border-orange-500/20",
-    model: "gpt-4o",
-    tokens: "850",
-    cost: "$0.012",
-  },
-  {
-    timestamp: "Oct 24, 10:38:10",
-    project: "E-commerce Store",
-    agent: "Reviewer",
-    agentColor: "bg-red-500/10 text-red-400 border-red-500/20",
-    model: "claude-3-opus",
-    tokens: "2,400",
-    cost: "$0.180",
-  },
-];
+const AGENT_STYLES = {
+  developer: "bg-blue-500/10 text-blue-400 border-blue-500/20",
+  designer: "bg-pink-500/10 text-pink-400 border-pink-500/20",
+  pm: "bg-orange-500/10 text-orange-400 border-orange-500/20",
+  reviewer: "bg-red-500/10 text-red-400 border-red-500/20",
+};
 
-export default function ActivityTable() {
+function getAgentStyle(name) {
+  return AGENT_STYLES[name?.toLowerCase()] || "bg-slate-500/10 text-slate-400 border-slate-500/20";
+}
+
+function formatTimestamp(iso) {
+  if (!iso) return "—";
+  const d = new Date(iso);
+  return d.toLocaleDateString(undefined, {
+    month: "short",
+    day: "numeric",
+  }) + ", " + d.toLocaleTimeString(undefined, {
+    hour: "2-digit",
+    minute: "2-digit",
+    second: "2-digit",
+  });
+}
+
+function formatTokens(n) {
+  if (n == null) return "0";
+  return n.toLocaleString();
+}
+
+function formatCost(n) {
+  if (n == null) return "$0.000";
+  return `$${n.toFixed(3)}`;
+}
+
+export default function ActivityTable({ runs = [], loading = false }) {
   const [filter, setFilter] = useState("");
 
   const filtered = filter
-    ? MOCK_DATA.filter(
+    ? runs.filter(
         (r) =>
-          r.project.toLowerCase().includes(filter.toLowerCase()) ||
-          r.agent.toLowerCase().includes(filter.toLowerCase())
+          (r.project_id || "").toLowerCase().includes(filter.toLowerCase()) ||
+          (r.agent_name || "").toLowerCase().includes(filter.toLowerCase()) ||
+          (r.page_slug || "").toLowerCase().includes(filter.toLowerCase())
       )
-    : MOCK_DATA;
+    : runs;
 
   return (
     <div className="bg-slate-900 border border-slate-800 rounded-xl overflow-hidden">
@@ -75,51 +71,75 @@ export default function ActivityTable() {
           <thead>
             <tr className="bg-slate-950/50 text-slate-500 text-xs uppercase border-b border-slate-800">
               <th className="px-6 py-3 font-semibold">Timestamp</th>
-              <th className="px-6 py-3 font-semibold">Project</th>
+              <th className="px-6 py-3 font-semibold">Page</th>
               <th className="px-6 py-3 font-semibold">Agent</th>
-              <th className="px-6 py-3 font-semibold">Model</th>
+              <th className="px-6 py-3 font-semibold">Status</th>
               <th className="px-6 py-3 font-semibold text-right">Tokens</th>
               <th className="px-6 py-3 font-semibold text-right">Cost</th>
             </tr>
           </thead>
           <tbody className="text-sm divide-y divide-slate-800">
-            {filtered.map((row, i) => (
-              <tr
-                key={i}
-                className="hover:bg-slate-800/50 transition-colors"
-              >
-                <td className="px-6 py-4 text-slate-400 font-mono text-xs">
-                  {row.timestamp}
-                </td>
-                <td className="px-6 py-4 text-white font-medium">
-                  {row.project}
-                </td>
-                <td className="px-6 py-4">
-                  <span
-                    className={`px-2 py-1 rounded border text-xs ${row.agentColor}`}
-                  >
-                    {row.agent}
-                  </span>
-                </td>
-                <td className="px-6 py-4 text-slate-400 text-xs">
-                  {row.model}
-                </td>
-                <td className="px-6 py-4 text-slate-300 font-mono text-xs text-right">
-                  {row.tokens}
-                </td>
-                <td className="px-6 py-4 text-slate-300 font-mono text-xs text-right">
-                  {row.cost}
+            {loading ? (
+              <tr>
+                <td colSpan={6} className="px-6 py-8 text-center text-slate-500">
+                  Loading...
                 </td>
               </tr>
-            ))}
+            ) : filtered.length === 0 ? (
+              <tr>
+                <td colSpan={6} className="px-6 py-8 text-center text-slate-500">
+                  No activity yet
+                </td>
+              </tr>
+            ) : (
+              filtered.map((run) => (
+                <tr
+                  key={run.id}
+                  className="hover:bg-slate-800/50 transition-colors"
+                >
+                  <td className="px-6 py-4 text-slate-400 font-mono text-xs">
+                    {formatTimestamp(run.started_at)}
+                  </td>
+                  <td className="px-6 py-4 text-white font-medium text-xs">
+                    {run.page_slug || run.project_id?.slice(0, 8) || "—"}
+                  </td>
+                  <td className="px-6 py-4">
+                    <span
+                      className={`px-2 py-1 rounded border text-xs capitalize ${getAgentStyle(run.agent_name)}`}
+                    >
+                      {run.agent_name}
+                    </span>
+                  </td>
+                  <td className="px-6 py-4">
+                    <span
+                      className={`text-xs ${
+                        run.status === "completed"
+                          ? "text-green-400"
+                          : run.status === "failed"
+                            ? "text-red-400"
+                            : "text-yellow-400"
+                      }`}
+                    >
+                      {run.status}
+                    </span>
+                  </td>
+                  <td className="px-6 py-4 text-slate-300 font-mono text-xs text-right">
+                    {formatTokens((run.input_tokens || 0) + (run.output_tokens || 0))}
+                  </td>
+                  <td className="px-6 py-4 text-slate-300 font-mono text-xs text-right">
+                    {formatCost(run.cost)}
+                  </td>
+                </tr>
+              ))
+            )}
           </tbody>
         </table>
       </div>
 
       <div className="p-4 bg-slate-950 border-t border-slate-800 flex justify-center">
-        <button className="text-xs text-slate-500 hover:text-white transition-colors">
-          View All Logs
-        </button>
+        <span className="text-xs text-slate-500">
+          {filtered.length} {filtered.length === 1 ? "entry" : "entries"}
+        </span>
       </div>
     </div>
   );

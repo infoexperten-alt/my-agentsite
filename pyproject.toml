@@ -1,10 +1,10 @@
 [build-system]
-requires = ["setuptools>=61", "setuptools_scm>=8", "wheel"]
+requires = ["setuptools>=61", "wheel"]
 build-backend = "setuptools.build_meta"
 
 [project]
 name = "agentsite"
-dynamic = ["version"]
+version = "0.1.0"
 description = "AI-Powered Website Builder using Prompture agent orchestration"
 readme = "README.md"
 license = "MIT"
@@ -35,10 +35,6 @@ agentsite = "agentsite.cli:cli"
 
 [tool.setuptools.packages.find]
 include = ["agentsite*"]
-
-[tool.setuptools_scm]
-write_to = "agentsite/_version.py"
-fallback_version = "0.1.0"
 
 [tool.ruff]
 target-version = "py310"

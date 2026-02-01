@@ -9,7 +9,7 @@ export default function useProviders() {
     setLoading(true);
     try {
       const data = await providersApi.getProviders();
-      setProviders(data);
+      setProviders(data.providers || data);
     } catch {
       setProviders([]);
     } finally {

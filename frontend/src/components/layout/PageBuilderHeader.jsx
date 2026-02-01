@@ -1,58 +1,99 @@
 import { useNavigate } from "react-router-dom";
 import {
   ArrowLeft,
-  Lightning,
   Eye,
   Code as CodeIcon,
-  RocketLaunch,
+  Export,
 } from "@phosphor-icons/react";
 import DeviceSwitcher from "../builder/DeviceSwitcher";
-import Badge from "../shared/Badge";
+import VersionSelector from "../builder/VersionSelector";
+import ProgressPipeline from "../builder/ProgressPipeline";
+import { getExportUrl } from "../../api/assets";
 
 export default function PageBuilderHeader({
   projectId,
   page,
   device,
   onDeviceChange,
+  versions,
+  activeVersion,
+  onVersionChange,
+  generating,
+  agents,
+  pipelineAgents,
+  viewMode,
+  onViewModeChange,
 }) {
   const navigate = useNavigate();
 
   return (
     <header className="h-14 border-b border-slate-800 bg-slate-950 flex items-center justify-between px-4 shrink-0 z-20">
-      <div className="flex items-center gap-4">
+      <div className="flex items-center gap-4 min-w-0">
         <button
           onClick={() => navigate(`/project/${projectId}`)}
-          className="text-slate-500 hover:text-white transition-colors flex items-center gap-1 text-sm"
+          className="text-slate-500 hover:text-white transition-colors flex items-center gap-1 text-sm shrink-0"
         >
           <ArrowLeft size={14} /> Back
         </button>
         <div className="h-4 w-px bg-slate-800" />
-        <div className="flex items-center gap-2">
-          <span className="font-semibold text-white">
+        <div className="flex items-center gap-2 min-w-0">
+          <span className="font-semibold text-white truncate">
             {page?.title || "..."}
           </span>
-          <span className="text-slate-600 text-xs">/{page?.slug}</span>
+          <span className="text-slate-600 text-xs shrink-0">/{page?.slug}</span>
         </div>
       </div>
 
       <DeviceSwitcher active={device} onChange={onDeviceChange} />
 
       <div className="flex items-center gap-3">
-        <div className="flex items-center text-xs text-slate-500 mr-2 gap-4">
-          <span className="flex items-center gap-1">
-            <Lightning className="text-yellow-500" size={12} /> Preview
-          </span>
+        {versions?.length > 0 && (
+          <VersionSelector
+            versions={versions}
+            active={activeVersion}
+            onChange={onVersionChange}
+          />
+        )}
+
+        {generating && (
+          <ProgressPipeline agents={agents} pipelineAgents={pipelineAgents} />
+        )}
+
+        {/* Preview / Code toggle */}
+        <div className="flex items-center rounded-lg border border-slate-800 overflow-hidden">
+          <button
+            onClick={() => onViewModeChange("preview")}
+            className={`flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium transition-colors ${
+              viewMode === "preview"
+                ? "bg-slate-800 text-white"
+                : "text-slate-500 hover:text-slate-300"
+            }`}
+            title="Preview"
+          >
+            <Eye size={14} />
+            Preview
+          </button>
+          <button
+            onClick={() => onViewModeChange("code")}
+            className={`flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium transition-colors ${
+              viewMode === "code"
+                ? "bg-slate-800 text-white"
+                : "text-slate-500 hover:text-slate-300"
+            }`}
+            title="Code"
+          >
+            <CodeIcon size={14} />
+            Code
+          </button>
         </div>
-        <button
-          className="text-slate-400 hover:text-white p-2 rounded-lg hover:bg-slate-900 transition-colors"
-          title="Code View"
+
+        <a
+          href={getExportUrl(projectId)}
+          className="bg-brand-600 hover:bg-brand-500 text-white px-4 py-1.5 rounded-lg text-sm font-semibold shadow-lg shadow-brand-500/20 flex items-center gap-2 transition-colors"
         >
-          <CodeIcon size={18} />
-        </button>
-        <button className="bg-brand-600 hover:bg-brand-500 text-white px-4 py-1.5 rounded-lg text-sm font-semibold shadow-lg shadow-brand-500/20 flex items-center gap-2 transition-colors">
-          Publish Updates
-          <RocketLaunch size={14} />
-        </button>
+          Export
+          <Export size={14} />
+        </a>
       </div>
     </header>
   );

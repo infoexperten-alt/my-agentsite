@@ -26,7 +26,7 @@ export default function PreviewFrame({ src, width }) {
             src={src}
             className="w-full h-full border-none"
             title="Page Preview"
-            sandbox="allow-scripts allow-same-origin"
+            sandbox="allow-scripts"
           />
         ) : (
           <div className="flex items-center justify-center h-full text-slate-400 text-sm">

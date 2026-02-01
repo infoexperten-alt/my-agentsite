@@ -8,6 +8,8 @@ import ProjectSettingsPage from "./pages/ProjectSettingsPage";
 import PageBuilderPage from "./pages/PageBuilderPage";
 import AgentsPage from "./pages/AgentsPage";
 import AnalyticsPage from "./pages/AnalyticsPage";
+import ApiKeysPage from "./pages/ApiKeysPage";
+import SettingsPage from "./pages/SettingsPage";
 import { AppProvider } from "./context/AppContext";
 import "./index.css";
 
@@ -20,6 +22,8 @@ ReactDOM.createRoot(document.getElementById("root")).render(
             <Route index element={<DashboardPage />} />
             <Route path="agents" element={<AgentsPage />} />
             <Route path="analytics" element={<AnalyticsPage />} />
+            <Route path="settings" element={<SettingsPage />} />
+            <Route path="settings/api-keys" element={<ApiKeysPage />} />
             <Route path="project/:projectId" element={<ProjectPage />} />
             <Route path="project/:projectId/settings" element={<ProjectSettingsPage />} />
           </Route>

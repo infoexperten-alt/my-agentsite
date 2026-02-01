@@ -49,13 +49,29 @@ async def update_agent(
 
 
 @router.get("/runs")
-async def list_agent_runs(limit: int = 50, repo=Depends(get_agent_run_repo)):
+async def list_agent_runs(
+    limit: int = 50,
+    since: str | None = None,
+    repo=Depends(get_agent_run_repo),
+):
     """List recent agent runs."""
-    runs = await repo.list_recent(limit)
+    runs = await repo.list_recent(limit, since=since)
     return [r.model_dump() for r in runs]
 
 
 @router.get("/stats")
-async def get_agent_stats(repo=Depends(get_agent_run_repo)):
+async def get_agent_stats(
+    since: str | None = None,
+    repo=Depends(get_agent_run_repo),
+):
     """Get aggregated agent statistics."""
-    return await repo.get_stats()
+    return await repo.get_stats(since=since)
+
+
+@router.get("/stats/daily")
+async def get_daily_stats(
+    days: int = 30,
+    repo=Depends(get_agent_run_repo),
+):
+    """Get daily token aggregates for the last N days."""
+    return await repo.get_daily_stats(days=days)

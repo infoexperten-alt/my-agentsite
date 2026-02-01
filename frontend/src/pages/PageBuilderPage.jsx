@@ -9,9 +9,8 @@ import { getPage, createPage, listMessages, createMessage } from "../api/project
 import PageBuilderHeader from "../components/layout/PageBuilderHeader";
 import ChatSidebar from "../components/builder/ChatSidebar";
 import PreviewFrame from "../components/builder/PreviewFrame";
-import VersionSelector from "../components/builder/VersionSelector";
+import CodeView from "../components/builder/CodeView";
 import ZoomControls from "../components/builder/ZoomControls";
-import ProgressPipeline from "../components/builder/ProgressPipeline";
 
 export default function PageBuilderPage() {
   const { projectId, slug } = useParams();
@@ -26,6 +25,7 @@ export default function PageBuilderPage() {
   const [zoom, setZoom] = useState(100);
   const [activeVersion, setActiveVersion] = useState(null);
   const [refreshKey, setRefreshKey] = useState(0);
+  const [viewMode, setViewMode] = useState("preview");
   const prevGenerating = useRef(false);
 
   const page = pages.find((p) => p.slug === slug);
@@ -52,7 +52,6 @@ export default function PageBuilderPage() {
           const msg = { role: m.role, content: m.content, time: m.created_at };
           if (m.image) msg.image = m.image;
           if (m.meta && Object.keys(m.meta).length > 0) {
-            // Restore agent-progress metadata
             if (m.meta.agents) msg.agents = m.meta.agents;
             if (m.meta.done !== undefined) msg.done = m.meta.done;
           }
@@ -79,9 +78,8 @@ export default function PageBuilderPage() {
   useEffect(() => {
     if (prevGenerating.current && !gen.generating) {
       setRefreshKey((k) => k + 1);
-      // Auto-select latest version after a short delay for versions to refresh
       setTimeout(() => {
-        setActiveVersion(null); // reset so the versions useEffect picks the latest
+        setActiveVersion(null);
       }, 500);
     }
     prevGenerating.current = gen.generating;
@@ -111,14 +109,12 @@ export default function PageBuilderPage() {
     };
     setMessages((prev) => [...prev, userMsg]);
 
-    // Persist to backend
     createMessage(projectId, slug, {
       role: "user",
       content: text,
       image: imageUrl,
     }).catch(() => {});
 
-    // Pick model
     const model =
       project?.model ||
       (models.models.length ? models.models[0].id : "openai/gpt-4o");
@@ -126,7 +122,6 @@ export default function PageBuilderPage() {
     gen.start(slug, { prompt: text, model });
   };
 
-  // Build pipeline agent labels
   const getAgentLabel = useCallback((name) => {
     return name.charAt(0).toUpperCase() + name.slice(1);
   }, []);
@@ -138,7 +133,6 @@ export default function PageBuilderPage() {
     const agentEntries = Object.entries(gen.agents);
     if (agentEntries.length === 0 && !gen.pipelineAgents) return;
 
-    // Build the agents list in canonical order, filtered to those in this pipeline
     const CANONICAL_ORDER = ["pm", "designer", "developer", "reviewer"];
     const pipelineSet = gen.pipelineAgents || agentEntries.map(([name]) => name);
     const knownAgents = CANONICAL_ORDER.filter((k) => pipelineSet.includes(k));
@@ -176,7 +170,6 @@ export default function PageBuilderPage() {
       return [...prev, progressMsg];
     });
 
-    // Persist the final agent-progress message when generation finishes
     if (done) {
       createMessage(projectId, slug, {
         role: "agent-progress",
@@ -208,6 +201,14 @@ export default function PageBuilderPage() {
         page={page}
         device={device}
         onDeviceChange={setDevice}
+        versions={versions}
+        activeVersion={activeVersion}
+        onVersionChange={setActiveVersion}
+        generating={gen.generating}
+        agents={gen.agents}
+        pipelineAgents={gen.pipelineAgents}
+        viewMode={viewMode}
+        onViewModeChange={setViewMode}
       />
 
       <div className="flex-1 flex overflow-hidden">
@@ -232,24 +233,21 @@ export default function PageBuilderPage() {
             {device || "100%"} <span className="text-slate-600">x</span> auto
           </div>
 
-          {/* Version selector + pipeline */}
-          {(versions.length > 0 || gen.generating) && (
-            <div className="absolute top-4 right-4 flex items-center gap-4 z-20">
-              {gen.generating && <ProgressPipeline agents={gen.agents} pipelineAgents={gen.pipelineAgents} />}
-              <VersionSelector
-                versions={versions}
-                active={activeVersion}
-                onChange={setActiveVersion}
-              />
-            </div>
-          )}
-
-          {/* Preview frame */}
+          {/* Preview or Code view */}
           <div
             className="relative flex items-center justify-center w-full h-full z-10"
             style={{ zoom: `${zoom}%` }}
           >
-            <PreviewFrame src={previewUrl} width={device} />
+            {viewMode === "code" ? (
+              <CodeView
+                projectId={projectId}
+                slug={slug}
+                version={activeVersion}
+                width={device}
+              />
+            ) : (
+              <PreviewFrame src={previewUrl} width={device} />
+            )}
           </div>
 
           <ZoomControls zoom={zoom} onZoomChange={setZoom} />
