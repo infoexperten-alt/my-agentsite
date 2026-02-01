@@ -7,7 +7,7 @@ from pathlib import Path
 from fastapi import APIRouter, Depends, HTTPException
 from fastapi.responses import FileResponse, HTMLResponse
 
-from ..deps import get_pm
+from ..deps import get_page_repo, get_pm
 
 router = APIRouter(prefix="/preview", tags=["preview"])
 
@@ -46,8 +46,14 @@ def _find_latest_version(pm, project_id: str, slug: str) -> int | None:
 
 
 @router.get("/{project_id}/{slug}")
-async def preview_page_latest(project_id: str, slug: str, pm=Depends(get_pm)):
+async def preview_page_latest(
+    project_id: str, slug: str, pm=Depends(get_pm), page_repo=Depends(get_page_repo)
+):
     """Serve the index.html of the latest version of a page."""
+    # Cross-check: page must exist in DB to prevent serving stale files
+    page = await page_repo.get_by_slug(project_id, slug)
+    if page is None:
+        raise HTTPException(status_code=404, detail=f"Page '{slug}' not found")
     version = _find_latest_version(pm, project_id, slug)
     if version is None:
         raise HTTPException(status_code=404, detail=f"No versions found for page '{slug}'")

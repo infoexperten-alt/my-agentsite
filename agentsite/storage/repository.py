@@ -6,7 +6,7 @@ import json
 from datetime import datetime, timezone
 from typing import Any
 
-from ..models import AgentConfig, AgentRun, Page, PageVersion, Project, StyleSpec
+from ..models import AgentConfig, AgentRun, ChatMessage, Page, PageVersion, Project, StyleSpec
 from .database import Database
 
 
@@ -271,6 +271,59 @@ class VersionRepository:
             error=row["error"],
             created_at=row["created_at"],
             completed_at=row["completed_at"],
+        )
+
+
+class MessageRepository:
+    """CRUD operations for chat messages within page builder sessions."""
+
+    def __init__(self, db: Database) -> None:
+        self._db = db
+
+    async def create(self, msg: ChatMessage) -> ChatMessage:
+        """Insert a new message."""
+        await self._db.conn.execute(
+            """INSERT INTO messages (id, page_id, role, content, image, meta, created_at)
+               VALUES (?, ?, ?, ?, ?, ?, ?)""",
+            (
+                msg.id,
+                msg.page_id,
+                msg.role,
+                msg.content,
+                msg.image,
+                json.dumps(msg.meta),
+                msg.created_at,
+            ),
+        )
+        await self._db.conn.commit()
+        return msg
+
+    async def list_by_page(self, page_id: str) -> list[ChatMessage]:
+        """List all messages for a page, ordered chronologically."""
+        cursor = await self._db.conn.execute(
+            "SELECT * FROM messages WHERE page_id = ? ORDER BY created_at ASC",
+            (page_id,),
+        )
+        rows = await cursor.fetchall()
+        return [self._row_to_message(row) for row in rows]
+
+    async def delete_by_page(self, page_id: str) -> None:
+        """Delete all messages for a page."""
+        await self._db.conn.execute(
+            "DELETE FROM messages WHERE page_id = ?", (page_id,)
+        )
+        await self._db.conn.commit()
+
+    @staticmethod
+    def _row_to_message(row) -> ChatMessage:
+        return ChatMessage(
+            id=row["id"],
+            page_id=row["page_id"],
+            role=row["role"],
+            content=row["content"],
+            image=row["image"],
+            meta=json.loads(row["meta"]) if row["meta"] else {},
+            created_at=row["created_at"],
         )
 
 

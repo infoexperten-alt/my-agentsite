@@ -76,6 +76,19 @@ class PageOutput(BaseModel):
     notes: str = Field(default="", description="Developer notes about the implementation")
 
 
+class PageOutputSummary(BaseModel):
+    """Lightweight summary returned by Developer Agent after writing files via tools.
+
+    The actual file contents are written to disk using the write_file tool.
+    This model only captures metadata so that JSON parsing stays reliable.
+    """
+
+    files_written: list[str] = Field(
+        description="List of relative file paths that were written using the write_file tool, e.g. ['index.html', 'styles.css']"
+    )
+    notes: str = Field(default="", description="Brief developer notes about the implementation")
+
+
 class ReviewFeedback(BaseModel):
     """Output of the Reviewer Agent — QA feedback."""
 
@@ -163,6 +176,23 @@ class AgentRun(BaseModel):
     output_tokens: int = Field(default=0)
     cost: float = Field(default=0.0)
     output_summary: dict = Field(default_factory=dict)
+
+
+# ------------------------------------------------------------------
+# WebSocket event model
+# ------------------------------------------------------------------
+
+
+class ChatMessage(BaseModel):
+    """A chat message within a page builder session."""
+
+    id: str = Field(default_factory=lambda: uuid.uuid4().hex[:12])
+    page_id: str = Field(default="")
+    role: str = Field(default="user")  # user, agent, agent-progress
+    content: str = Field(default="")
+    image: str | None = Field(default=None)
+    meta: dict = Field(default_factory=dict)  # agents list, done flag, etc.
+    created_at: str = Field(default_factory=lambda: datetime.now(timezone.utc).isoformat())
 
 
 # ------------------------------------------------------------------

@@ -44,6 +44,7 @@ async def lifespan(app: FastAPI):
     deps.version_repo = deps.VersionRepository(deps.db)
     deps.agent_config_repo = deps.AgentConfigRepository(deps.db)
     deps.agent_run_repo = deps.AgentRunRepository(deps.db)
+    deps.message_repo = deps.MessageRepository(deps.db)
     logger.info("AgentSite started — data dir: %s", settings.data_dir)
     yield
     await deps.db.close()

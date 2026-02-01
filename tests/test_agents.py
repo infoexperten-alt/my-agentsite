@@ -12,7 +12,7 @@ from agentsite.agents.personas import (
 )
 from agentsite.agents.pm import create_pm_agent
 from agentsite.agents.reviewer import create_reviewer_agent
-from agentsite.models import PageOutput, ReviewFeedback, SitePlan, StyleSpec
+from agentsite.models import PageOutputSummary, ReviewFeedback, SitePlan, StyleSpec
 
 
 class TestPersonas:
@@ -57,7 +57,7 @@ class TestAgentFactories:
         agent = create_developer_agent("openai/gpt-4o")
         assert isinstance(agent, Agent)
         assert agent.name == "developer"
-        assert agent._output_type is PageOutput
+        assert agent._output_type is PageOutputSummary
         # Has tools registered
         assert len(agent._tools.definitions) >= 3
 

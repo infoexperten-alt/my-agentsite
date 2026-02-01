@@ -163,7 +163,19 @@ class ProjectManager:
             shutil.rmtree(d)
 
     def delete_page(self, project_id: str, slug: str) -> None:
-        """Remove a page's directory."""
+        """Remove a page's directory with retry for Windows file locks."""
+        import time
+
         d = self.page_dir(project_id, slug)
-        if d.exists():
-            shutil.rmtree(d)
+        if not d.exists():
+            return
+        # Retry up to 3 times to handle Windows file lock issues
+        for attempt in range(3):
+            try:
+                shutil.rmtree(d)
+                return
+            except PermissionError:
+                if attempt < 2:
+                    time.sleep(0.2 * (attempt + 1))
+                else:
+                    raise

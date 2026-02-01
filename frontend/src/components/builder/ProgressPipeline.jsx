@@ -1,3 +1,4 @@
+import { useState, useEffect } from "react";
 import {
   Strategy,
   PaintBrushBroad,
@@ -6,6 +7,19 @@ import {
   SpinnerGap,
   Check,
 } from "@phosphor-icons/react";
+
+function ElapsedTimer({ since }) {
+  const [elapsed, setElapsed] = useState(0);
+  useEffect(() => {
+    if (!since) return;
+    const start = new Date(since).getTime();
+    const tick = () => setElapsed(Math.round((Date.now() - start) / 1000));
+    tick();
+    const id = setInterval(tick, 1000);
+    return () => clearInterval(id);
+  }, [since]);
+  return <span className="text-[10px] tabular-nums opacity-70">{elapsed}s</span>;
+}
 
 const ALL_AGENTS = {
   pm: { key: "pm", label: "PM", icon: Strategy, color: "text-orange-500" },
@@ -67,6 +81,17 @@ export default function ProgressPipeline({ agents, pipelineAgents }) {
                 <Icon size={12} className={isComplete ? "text-green-400" : ""} />
               )}
               {label}
+              {isRunning && agents[key]?.startedAt && (
+                <ElapsedTimer since={agents[key].startedAt} />
+              )}
+              {isComplete && agents[key]?.duration_s != null && (
+                <span
+                  className="text-[10px] tabular-nums opacity-70"
+                  title={`${agents[key].input_tokens || 0} in / ${agents[key].output_tokens || 0} out tokens`}
+                >
+                  {agents[key].duration_s}s
+                </span>
+              )}
             </div>
           </div>
         );

@@ -16,13 +16,19 @@ export default function useGeneration(projectId) {
       ws.on("agent_start", (msg) => {
         setAgents((prev) => ({
           ...prev,
-          [msg.agent]: { status: "running", ...msg.data },
+          [msg.agent]: { status: "running", startedAt: msg.data?.started_at, ...msg.data },
         }));
       }),
       ws.on("agent_complete", (msg) => {
         setAgents((prev) => ({
           ...prev,
-          [msg.agent]: { status: "complete", ...msg.data },
+          [msg.agent]: {
+            ...prev[msg.agent],
+            status: "complete",
+            duration_s: msg.data?.duration_s,
+            input_tokens: msg.data?.input_tokens,
+            output_tokens: msg.data?.output_tokens,
+          },
         }));
       }),
       ws.on("file_written", (msg) => {

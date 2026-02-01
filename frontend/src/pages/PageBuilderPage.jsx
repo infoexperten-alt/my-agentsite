@@ -4,8 +4,8 @@ import useProject from "../hooks/useProject";
 import useVersions from "../hooks/useVersions";
 import useGeneration from "../hooks/useGeneration";
 import { useApp } from "../context/AppContext";
-import { getPreviewUrl } from "../api/assets";
-import { uploadAsset } from "../api/assets";
+import { getPreviewUrl, uploadAsset } from "../api/assets";
+import { getPage, createPage, listMessages, createMessage } from "../api/projects";
 import PageBuilderHeader from "../components/layout/PageBuilderHeader";
 import ChatSidebar from "../components/builder/ChatSidebar";
 import PreviewFrame from "../components/builder/PreviewFrame";
@@ -21,6 +21,7 @@ export default function PageBuilderPage() {
   const gen = useGeneration(projectId);
 
   const [messages, setMessages] = useState([]);
+  const [pageReady, setPageReady] = useState(false);
   const [device, setDevice] = useState(null);
   const [zoom, setZoom] = useState(100);
   const [activeVersion, setActiveVersion] = useState(null);
@@ -28,6 +29,39 @@ export default function PageBuilderPage() {
   const prevGenerating = useRef(false);
 
   const page = pages.find((p) => p.slug === slug);
+
+  // Ensure the page exists in the DB before loading messages
+  useEffect(() => {
+    if (!projectId || !slug) return;
+    let cancelled = false;
+    getPage(projectId, slug)
+      .catch(() =>
+        createPage(projectId, { slug, title: slug.charAt(0).toUpperCase() + slug.slice(1) })
+      )
+      .then(() => { if (!cancelled) setPageReady(true); })
+      .catch(() => { if (!cancelled) setPageReady(true); });
+    return () => { cancelled = true; };
+  }, [projectId, slug]);
+
+  // Load persisted messages on mount (after page exists)
+  useEffect(() => {
+    if (!projectId || !slug || !pageReady) return;
+    listMessages(projectId, slug)
+      .then((saved) => {
+        const restored = saved.map((m) => {
+          const msg = { role: m.role, content: m.content, time: m.created_at };
+          if (m.image) msg.image = m.image;
+          if (m.meta && Object.keys(m.meta).length > 0) {
+            // Restore agent-progress metadata
+            if (m.meta.agents) msg.agents = m.meta.agents;
+            if (m.meta.done !== undefined) msg.done = m.meta.done;
+          }
+          return msg;
+        });
+        setMessages(restored);
+      })
+      .catch(() => {});
+  }, [projectId, slug, pageReady]);
 
   // Keep version selector in sync
   useEffect(() => {
@@ -77,6 +111,13 @@ export default function PageBuilderPage() {
     };
     setMessages((prev) => [...prev, userMsg]);
 
+    // Persist to backend
+    createMessage(projectId, slug, {
+      role: "user",
+      content: text,
+      image: imageUrl,
+    }).catch(() => {});
+
     // Pick model
     const model =
       project?.model ||
@@ -101,11 +142,18 @@ export default function PageBuilderPage() {
     const CANONICAL_ORDER = ["pm", "designer", "developer", "reviewer"];
     const pipelineSet = gen.pipelineAgents || agentEntries.map(([name]) => name);
     const knownAgents = CANONICAL_ORDER.filter((k) => pipelineSet.includes(k));
-    const agentsList = knownAgents.map((name) => ({
-      name,
-      label: getAgentLabel(name),
-      status: gen.agents[name]?.status || "pending",
-    }));
+    const agentsList = knownAgents.map((name) => {
+      const agentData = gen.agents[name] || {};
+      return {
+        name,
+        label: getAgentLabel(name),
+        status: agentData.status || "pending",
+        startedAt: agentData.startedAt || null,
+        duration_s: agentData.duration_s ?? null,
+        input_tokens: agentData.input_tokens || 0,
+        output_tokens: agentData.output_tokens || 0,
+      };
+    });
 
     const done = !gen.generating;
 
@@ -125,17 +173,31 @@ export default function PageBuilderPage() {
       }
       return [...prev, progressMsg];
     });
-  }, [gen.agents, gen.generating, gen.pipelineAgents, getAgentLabel]);
+
+    // Persist the final agent-progress message when generation finishes
+    if (done) {
+      createMessage(projectId, slug, {
+        role: "agent-progress",
+        content: "",
+        meta: { agents: agentsList, done: true },
+      }).catch(() => {});
+    }
+  }, [gen.agents, gen.generating, gen.pipelineAgents, getAgentLabel, projectId, slug]);
 
   // Add error message
   useEffect(() => {
     if (gen.error) {
+      const errorContent = `Error: ${gen.error}`;
       setMessages((prev) => [
         ...prev,
-        { role: "agent", content: `Error: ${gen.error}` },
+        { role: "agent", content: errorContent },
       ]);
+      createMessage(projectId, slug, {
+        role: "agent",
+        content: errorContent,
+      }).catch(() => {});
     }
-  }, [gen.error]);
+  }, [gen.error, projectId, slug]);
 
   return (
     <div className="h-screen flex flex-col overflow-hidden bg-slate-950 text-slate-300 font-sans antialiased selection:bg-brand-500 selection:text-white">

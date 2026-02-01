@@ -48,6 +48,26 @@ def _patch_pipeline_deps(group: Any, deps: Any) -> None:
             _wrap_agent_run(agent, deps)
 
 
+def _merge_nested_group_state(group: Any) -> None:
+    """After a pipeline runs, merge nested group state back to the parent.
+
+    The developer's ``page_output`` is stored in the LoopGroup's state
+    but never propagated to the parent SequentialGroup.  This helper
+    copies nested state back up so the pipeline can access it.
+    """
+    parent_state = group.shared_state
+    agents = getattr(group, "_agents", [])
+    for item in agents:
+        agent = item[0] if isinstance(item, tuple) else item
+        if hasattr(agent, "shared_state") and hasattr(agent, "_agents"):
+            # Recurse first
+            _merge_nested_group_state(agent)
+            # Merge child state into parent (child wins for new keys)
+            for k, v in agent.shared_state.items():
+                if k not in parent_state:
+                    group._state[k] = v
+
+
 def _wrap_agent_run(agent: Any, deps: Any) -> None:
     original_run = agent.run
 
@@ -117,7 +137,8 @@ class GenerationPipeline:
 
         def _on_agent_start(name: str, prompt: str) -> None:
             agent_key = _agent_name_to_key(name)
-            self._emit("agent_start", agent=agent_key)
+            started_at = datetime.now(timezone.utc).isoformat()
+            self._emit("agent_start", agent=agent_key, data={"started_at": started_at})
             run = AgentRun(
                 project_id=project.id,
                 page_slug=slug,
@@ -131,19 +152,32 @@ class GenerationPipeline:
 
         def _on_agent_complete(name: str, result: Any) -> None:
             agent_key = _agent_name_to_key(name)
-            self._emit(
-                "agent_complete",
-                agent=agent_key,
-                data={"output_preview": getattr(result, "output_text", "")[:500]},
-            )
             run = self._active_runs.pop(name, None)
+            start_time = self._run_start_times.pop(name, None)
+            duration_s = round(time.monotonic() - start_time, 1) if start_time else None
+
+            input_tokens = 0
+            output_tokens = 0
             if run:
                 run.status = "completed"
                 run.completed_at = datetime.now(timezone.utc).isoformat()
                 usage = getattr(result, "usage", None) or {}
                 if isinstance(usage, dict):
-                    run.input_tokens = usage.get("input_tokens", 0) or usage.get("prompt_tokens", 0)
-                    run.output_tokens = usage.get("output_tokens", 0) or usage.get("completion_tokens", 0)
+                    input_tokens = usage.get("input_tokens", 0) or usage.get("prompt_tokens", 0)
+                    output_tokens = usage.get("output_tokens", 0) or usage.get("completion_tokens", 0)
+                    run.input_tokens = input_tokens
+                    run.output_tokens = output_tokens
+
+            self._emit(
+                "agent_complete",
+                agent=agent_key,
+                data={
+                    "output_preview": getattr(result, "output_text", "")[:500],
+                    "duration_s": duration_s,
+                    "input_tokens": input_tokens,
+                    "output_tokens": output_tokens,
+                },
+            )
 
         def _on_agent_error(name: str, exc: Exception) -> None:
             agent_key = _agent_name_to_key(name)
@@ -190,8 +224,8 @@ class GenerationPipeline:
             pm_pipeline = SequentialGroup(
                 [(pm_agent, "{prompt}")],
                 callbacks=pm_callbacks,
+                state={"prompt": page_prompt},
             )
-            pm_pipeline._state["prompt"] = page_prompt
             _patch_pipeline_deps(pm_pipeline, deps)
 
             pm_result = pm_pipeline.run(page_prompt)
@@ -239,13 +273,16 @@ class GenerationPipeline:
                 agent_configs=self._agent_configs,
             )
 
-            # Transfer state from PM phase
-            for k, v in initial_state.items():
-                remaining_pipeline._state[k] = v
+            # Transfer state from PM phase and propagate to nested groups
+            # (LoopGroup) so prompt templates like {site_plan} resolve.
+            remaining_pipeline.inject_state(initial_state, recursive=True)
 
             _patch_pipeline_deps(remaining_pipeline, deps)
 
             result = remaining_pipeline.run("")
+
+            # Merge nested group state back so we can access page_output
+            _merge_nested_group_state(remaining_pipeline)
 
             # Merge usage from both phases
             combined_usage = pm_result.aggregate_usage.copy() if hasattr(pm_result, 'aggregate_usage') else {}
@@ -254,19 +291,35 @@ class GenerationPipeline:
                     if isinstance(v, (int, float)):
                         combined_usage[k] = combined_usage.get(k, 0) + v
 
-            # Extract structured outputs from shared state
+            # Extract structured outputs from shared state —
+            # check both the result's shared_state and the pipeline's
+            # own state (which now includes merged nested group state).
             state = result.shared_state
-            page_output_text = state.get("page_output", "")
+            page_output_text = state.get("page_output", "") or remaining_pipeline.shared_state.get("page_output", "")
 
-            # Write files from the developer's PageOutput if tools weren't used
-            if page_output_text and not written_files:
-                self._write_files_from_output(project.id, slug, version_number, page_output_text)
+            # If the developer agent didn't write files via tools, try to
+            # extract content from its raw output text as a fallback.
+            if not written_files:
+                if page_output_text:
+                    self._write_files_from_output(project.id, slug, version_number, page_output_text)
+
+            # Verify files actually exist on disk
+            final_files = self._pm.list_version_files(project.id, slug, version_number)
+            if not final_files:
+                logger.error(
+                    "Generation produced no files for project %s page %s v%d",
+                    project.id, slug, version_number,
+                )
+                raise RuntimeError(
+                    "Generation completed but no files were written to disk. "
+                    "The developer agent may have returned output in an unexpected format."
+                )
 
             self._emit("generation_complete", data={
                 "success": result.success,
                 "slug": slug,
                 "version": version_number,
-                "files": self._pm.list_version_files(project.id, slug, version_number),
+                "files": final_files,
                 "usage": combined_usage,
             })
 
@@ -299,5 +352,38 @@ class GenerationPipeline:
             page_output = PageOutput.model_validate(data)
             for f in page_output.files:
                 self._pm.write_version_file(project_id, slug, version, f.path, f.content)
+                logger.info("Wrote file from output: %s", f.path)
         except Exception:
-            logger.debug("Could not parse PageOutput from text, files may have been written via tools")
+            logger.warning(
+                "Could not parse PageOutput JSON, attempting HTML extraction (length=%d)",
+                len(output_text),
+                exc_info=True,
+            )
+            # Last resort: if the output contains raw HTML, save it as index.html
+            self._try_extract_raw_html(project_id, slug, version, output_text)
+
+    def _try_extract_raw_html(
+        self, project_id: str, slug: str, version: int, text: str
+    ) -> None:
+        """Attempt to extract raw HTML from agent output as a last resort."""
+        import re
+
+        # Look for HTML content (<!DOCTYPE or <html)
+        html_match = re.search(
+            r"(<!DOCTYPE html[\s\S]*?</html>|<html[\s\S]*?</html>)",
+            text,
+            re.IGNORECASE,
+        )
+        if html_match:
+            html_content = html_match.group(1)
+            self._pm.write_version_file(project_id, slug, version, "index.html", html_content)
+            logger.info("Extracted raw HTML fallback as index.html (%d bytes)", len(html_content))
+
+            # Also try to extract <style> blocks into styles.css
+            style_blocks = re.findall(r"<style[^>]*>([\s\S]*?)</style>", html_content, re.IGNORECASE)
+            if style_blocks:
+                css_content = "\n\n".join(style_blocks)
+                self._pm.write_version_file(project_id, slug, version, "styles.css", css_content)
+                logger.info("Extracted CSS fallback as styles.css (%d bytes)", len(css_content))
+        else:
+            logger.error("No HTML content found in developer output (length=%d)", len(text))

@@ -35,3 +35,12 @@ export const listVersionFiles = (projectId, slug, version) =>
   fetchJSON(
     `/api/projects/${projectId}/pages/${slug}/versions/${version}/files`
   );
+
+export const listMessages = (projectId, slug) =>
+  fetchJSON(`/api/projects/${projectId}/pages/${slug}/messages`);
+
+export const createMessage = (projectId, slug, data) =>
+  fetchJSON(`/api/projects/${projectId}/pages/${slug}/messages`, {
+    method: "POST",
+    body: JSON.stringify(data),
+  });

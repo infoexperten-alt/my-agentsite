@@ -1,5 +1,18 @@
-import { useState } from "react";
-import { Sparkle, WarningCircle, SpinnerGap, CheckCircle, CaretDown, CaretRight } from "@phosphor-icons/react";
+import { useState, useEffect } from "react";
+import { Sparkle, WarningCircle, SpinnerGap, CheckCircle, CaretDown, CaretRight, Timer, Lightning } from "@phosphor-icons/react";
+
+function ElapsedTimer({ since }) {
+  const [elapsed, setElapsed] = useState(0);
+  useEffect(() => {
+    if (!since) return;
+    const start = new Date(since).getTime();
+    const tick = () => setElapsed(Math.round((Date.now() - start) / 1000));
+    tick();
+    const id = setInterval(tick, 1000);
+    return () => clearInterval(id);
+  }, [since]);
+  return <span className="text-[10px] tabular-nums text-slate-500">{elapsed}s</span>;
+}
 
 function AgentProgressMessage({ message }) {
   const [expanded, setExpanded] = useState(false);
@@ -50,11 +63,34 @@ function AgentProgressMessage({ message }) {
                 {a.status === "pending" && (
                   <div className="w-3 h-3 rounded-full border border-slate-600 shrink-0" />
                 )}
-                <span className={a.status === "pending" ? "text-slate-500" : "text-slate-300"}>
+                <span className={`flex-1 ${a.status === "pending" ? "text-slate-500" : "text-slate-300"}`}>
                   {a.label}
                 </span>
+                {a.status === "running" && a.startedAt && (
+                  <ElapsedTimer since={a.startedAt} />
+                )}
+                {a.status === "complete" && a.duration_s != null && (
+                  <span className="text-slate-500 tabular-nums">{a.duration_s}s</span>
+                )}
+                {a.status === "complete" && (a.input_tokens > 0 || a.output_tokens > 0) && (
+                  <span className="text-slate-600 tabular-nums" title={`${a.input_tokens} in / ${a.output_tokens} out`}>
+                    {a.input_tokens + a.output_tokens} tok
+                  </span>
+                )}
               </div>
             ))}
+            {done && agents.length > 0 && (
+              <div className="flex items-center gap-2 text-xs border-t border-slate-800 pt-2 mt-2 text-slate-400">
+                <Timer size={12} className="shrink-0" />
+                <span>
+                  {agents.reduce((s, a) => s + (a.duration_s || 0), 0).toFixed(1)}s total
+                </span>
+                <Lightning size={12} className="shrink-0 ml-2" />
+                <span>
+                  {agents.reduce((s, a) => s + (a.input_tokens || 0) + (a.output_tokens || 0), 0).toLocaleString()} tokens
+                </span>
+              </div>
+            )}
           </div>
         )}
       </div>

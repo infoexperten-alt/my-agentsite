@@ -5,8 +5,8 @@ from __future__ import annotations
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 
-from ...models import Page, Project, StyleSpec
-from ..deps import get_page_repo, get_pm, get_repo, get_version_repo
+from ...models import ChatMessage, Page, Project, StyleSpec
+from ..deps import get_message_repo, get_page_repo, get_pm, get_repo, get_version_repo
 
 router = APIRouter(prefix="/api/projects", tags=["projects"])
 
@@ -83,8 +83,9 @@ async def delete_project(project_id: str, repo=Depends(get_repo), pm=Depends(get
     project = await repo.get(project_id)
     if project is None:
         raise HTTPException(status_code=404, detail="Project not found")
-    await repo.delete(project_id)
+    # Delete disk files FIRST to avoid orphaned files
     pm.delete(project_id)
+    await repo.delete(project_id)
     return {"deleted": project_id}
 
 
@@ -156,8 +157,10 @@ async def delete_page(
     page = await page_repo.get_by_slug(project_id, slug)
     if page is None:
         raise HTTPException(status_code=404, detail="Page not found")
-    await page_repo.delete(page.id)
+    # Delete disk files FIRST to avoid orphaned files if DB delete succeeds
+    # but disk delete fails
     pm.delete_page(project_id, slug)
+    await page_repo.delete(page.id)
     return {"deleted": slug}
 
 
@@ -186,3 +189,48 @@ async def list_version_files(
 ):
     files = pm.list_version_files(project_id, slug, version_number)
     return {"files": files}
+
+
+# -- Chat messages --
+
+class CreateMessageRequest(BaseModel):
+    role: str = "user"
+    content: str = ""
+    image: str | None = None
+    meta: dict = {}
+
+
+@router.get("/{project_id}/pages/{slug}/messages")
+async def list_messages(
+    project_id: str,
+    slug: str,
+    page_repo=Depends(get_page_repo),
+    message_repo=Depends(get_message_repo),
+):
+    page = await page_repo.get_by_slug(project_id, slug)
+    if page is None:
+        raise HTTPException(status_code=404, detail="Page not found")
+    messages = await message_repo.list_by_page(page.id)
+    return [m.model_dump() for m in messages]
+
+
+@router.post("/{project_id}/pages/{slug}/messages")
+async def create_message(
+    project_id: str,
+    slug: str,
+    req: CreateMessageRequest,
+    page_repo=Depends(get_page_repo),
+    message_repo=Depends(get_message_repo),
+):
+    page = await page_repo.get_by_slug(project_id, slug)
+    if page is None:
+        raise HTTPException(status_code=404, detail="Page not found")
+    msg = ChatMessage(
+        page_id=page.id,
+        role=req.role,
+        content=req.content,
+        image=req.image,
+        meta=req.meta,
+    )
+    await message_repo.create(msg)
+    return msg.model_dump()

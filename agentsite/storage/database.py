@@ -46,6 +46,16 @@ CREATE TABLE IF NOT EXISTS versions (
     UNIQUE(page_id, version_number)
 );
 
+CREATE TABLE IF NOT EXISTS messages (
+    id TEXT PRIMARY KEY,
+    page_id TEXT NOT NULL REFERENCES pages(id) ON DELETE CASCADE,
+    role TEXT NOT NULL DEFAULT 'user',
+    content TEXT NOT NULL DEFAULT '',
+    image TEXT,
+    meta TEXT DEFAULT '{}',
+    created_at TEXT NOT NULL
+);
+
 CREATE TABLE IF NOT EXISTS agent_configs (
     agent_name TEXT PRIMARY KEY,
     enabled INTEGER NOT NULL DEFAULT 1,
