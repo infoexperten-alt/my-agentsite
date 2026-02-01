@@ -10,6 +10,7 @@ from datetime import datetime, timezone
 from typing import Any
 
 from prompture import GroupCallbacks, GroupResult, SequentialGroup
+from prompture.group_types import ErrorPolicy
 
 from ..agents.orchestrator import _agent_model, create_dynamic_pipeline
 from ..config import settings
@@ -21,6 +22,7 @@ logger = logging.getLogger("agentsite.pipeline")
 
 # Apply Gemini tool result format fix at import time
 apply_gemini_patch()
+
 
 def _agent_name_to_key(name: str) -> str:
     """Normalize agent name to short key (handles both persona and agent names)."""
@@ -195,8 +197,7 @@ class GenerationPipeline:
                 self._developer_output_text = output_text
                 self._developer_tool_calls = tool_calls
                 logger.info(
-                    "Developer agent completed: output_text length=%d, tool_calls=%d, "
-                    "output_text[:200]=%s",
+                    "Developer agent completed: output_text length=%d, tool_calls=%d, output_text[:200]=%s",
                     len(output_text),
                     len(tool_calls),
                     repr(output_text[:200]),
@@ -215,6 +216,7 @@ class GenerationPipeline:
                 agent=agent_key,
                 data={
                     "output_preview": output_text[:2000],
+                    "full_output": output_text,
                     "duration_s": duration_s,
                     "input_tokens": input_tokens,
                     "output_tokens": output_tokens,
@@ -225,7 +227,10 @@ class GenerationPipeline:
 
         def _on_agent_error(name: str, exc: Exception) -> None:
             agent_key = _agent_name_to_key(name)
-            self._emit("error", agent=agent_key, data={"message": str(exc)})
+            # Emit as "agent_error" (non-fatal) rather than "error" (fatal).
+            # The pipeline may retry this agent with a fallback, so we don't
+            # want the frontend to disconnect the WebSocket prematurely.
+            self._emit("agent_error", agent=agent_key, data={"message": str(exc)})
             run = self._active_runs.pop(name, None)
             if run:
                 run.status = "failed"
@@ -272,6 +277,7 @@ class GenerationPipeline:
                 [(pm_agent, "{prompt}")],
                 callbacks=pm_callbacks,
                 state={"prompt": page_prompt},
+                error_policy=ErrorPolicy.raise_on_error,
             )
             _patch_pipeline_deps(pm_pipeline, deps)
 
@@ -279,7 +285,6 @@ class GenerationPipeline:
                 pm_result = pm_pipeline.run(page_prompt)
                 site_plan_text = pm_result.shared_state.get("site_plan", "")
             except Exception as pm_exc:
-                # Fallback: retry PM without structured output (for models like Kimi K2.5)
                 logger.warning(
                     "PM agent failed with structured output, retrying in plain text mode: %s",
                     pm_exc,
@@ -291,6 +296,7 @@ class GenerationPipeline:
                     [(pm_agent_plain, "{prompt}")],
                     callbacks=pm_callbacks,
                     state={"prompt": page_prompt},
+                    error_policy=ErrorPolicy.raise_on_error,
                 )
                 _patch_pipeline_deps(pm_pipeline_plain, deps)
                 pm_result = pm_pipeline_plain.run(page_prompt)
@@ -300,6 +306,7 @@ class GenerationPipeline:
             required_agents = ["designer", "developer", "reviewer"]  # default
             try:
                 from prompture import clean_json_text
+
                 cleaned = clean_json_text(site_plan_text)
                 plan_data = json.loads(cleaned)
                 site_plan = SitePlan.model_validate(plan_data)
@@ -322,6 +329,8 @@ class GenerationPipeline:
                 "review_feedback": "",
                 "logo_url": project.logo_url or "",
                 "icon_url": project.icon_url or "",
+                "page_slug": slug,
+                "page_title": slug.replace("-", " ").title(),
             }
 
             if "designer" in required_agents:
@@ -345,17 +354,18 @@ class GenerationPipeline:
                     on_agent_error=_on_agent_error,
                 )
 
+                designer_pipeline = SequentialGroup(
+                    [(designer_agent, "{designer_prompt}")],
+                    callbacks=designer_callbacks,
+                    state={"designer_prompt": designer_prompt},
+                    error_policy=ErrorPolicy.raise_on_error,
+                )
+                _patch_pipeline_deps(designer_pipeline, deps)
+
                 try:
-                    designer_pipeline = SequentialGroup(
-                        [(designer_agent, "{designer_prompt}")],
-                        callbacks=designer_callbacks,
-                        state={"designer_prompt": designer_prompt},
-                    )
-                    _patch_pipeline_deps(designer_pipeline, deps)
                     designer_result = designer_pipeline.run(designer_prompt)
                     style_spec_text = designer_result.shared_state.get("style_spec", "")
                 except Exception as designer_exc:
-                    # Fallback: retry Designer without structured output
                     logger.warning(
                         "Designer agent failed with structured output, retrying in plain text mode: %s",
                         designer_exc,
@@ -365,6 +375,7 @@ class GenerationPipeline:
                         [(designer_agent_plain, "{designer_prompt}")],
                         callbacks=designer_callbacks,
                         state={"designer_prompt": designer_prompt},
+                        error_policy=ErrorPolicy.raise_on_error,
                     )
                     _patch_pipeline_deps(designer_pipeline_plain, deps)
                     designer_result = designer_pipeline_plain.run(designer_prompt)
@@ -373,8 +384,8 @@ class GenerationPipeline:
                 initial_state["style_spec"] = style_spec_text
 
                 # Merge designer usage into pm_result for later aggregation
-                if hasattr(designer_result, 'aggregate_usage'):
-                    if not hasattr(pm_result, 'aggregate_usage'):
+                if hasattr(designer_result, "aggregate_usage"):
+                    if not hasattr(pm_result, "aggregate_usage"):
                         pm_result.aggregate_usage = {}
                     for k, v in designer_result.aggregate_usage.items():
                         if isinstance(v, (int, float)):
@@ -396,6 +407,7 @@ class GenerationPipeline:
                 model,
                 callbacks=group_callbacks,
                 agent_configs=self._agent_configs,
+                error_policy=ErrorPolicy.raise_on_error,
             )
 
             # Transfer state from PM phase and propagate to nested groups
@@ -404,49 +416,65 @@ class GenerationPipeline:
 
             _patch_pipeline_deps(remaining_pipeline, deps)
 
-            result = remaining_pipeline.run("")
+            _need_dev_fallback = False
+            try:
+                result = remaining_pipeline.run("")
+            except Exception as dev_exc:
+                logger.warning(
+                    "Developer pipeline failed (tools may be unsupported), will retry with plain text developer: %s",
+                    dev_exc,
+                )
+                _need_dev_fallback = True
+                # Create a minimal result to carry forward
+                result = GroupResult(
+                    agent_results=[],
+                    aggregate_usage={},
+                    shared_state=dict(initial_state),
+                    elapsed_ms=0,
+                    timeline=[],
+                    errors=[],
+                    success=False,
+                )
 
             # Merge nested group state back so we can access page_output
             _merge_nested_group_state(remaining_pipeline)
 
-            # Detect developer failure: Prompture's SequentialGroup catches
-            # agent errors internally (doesn't re-raise), so check for a
-            # failed result with no files and no developer output.
-            _dev_failed = (
-                not result.success
-                or (
-                    not written_files
-                    and not self._developer_output_text
-                    and not self._developer_tool_calls
-                )
-            )
-            if _dev_failed and not written_files:
-                dev_errors = [
-                    e for e in getattr(result, "errors", [])
-                    if getattr(e, "agent_name", "") in ("developer", "agentsite_developer")
-                ]
-                logger.warning(
-                    "Developer pipeline produced no output (success=%s, errors=%d, "
-                    "written_files=%d, dev_output_len=%d, tool_calls=%d). "
-                    "Retrying with plain text developer.",
-                    result.success,
-                    len(dev_errors),
-                    len(written_files),
-                    len(self._developer_output_text),
-                    len(self._developer_tool_calls),
-                )
+            # Also fall back if the pipeline "succeeded" but developer
+            # produced no usable output — either no tool calls and no files,
+            # or the output text has no actual HTML code (just analysis/planning).
+            if not _need_dev_fallback and not written_files and not self._developer_tool_calls:
+                dev_text = self._developer_output_text or ""
+                has_html = "<!DOCTYPE" in dev_text.upper() or "<html" in dev_text.lower()
+                has_fenced = "```html" in dev_text or "```css" in dev_text
+                if not has_html and not has_fenced:
+                    logger.warning(
+                        "Developer pipeline produced no usable code (success=%s, "
+                        "written_files=%d, tool_calls=%d, has_html=%s, output_len=%d). "
+                        "Retrying with plain text developer.",
+                        result.success,
+                        len(written_files),
+                        len(self._developer_tool_calls),
+                        has_html,
+                        len(dev_text),
+                    )
+                    _need_dev_fallback = True
+
+            if _need_dev_fallback:
                 from ..agents.developer import create_developer_agent_plain
 
                 dev_model = self._agent_models["developer"]
                 dev_agent_plain = create_developer_agent_plain(dev_model)
 
                 dev_prompt = (
-                    "Build the website page based on this plan:\n\n"
+                    f"Build the '{slug}' page ONLY. No other pages.\n\n"
                     f"Site Plan: {initial_state['site_plan']}\n\n"
                     f"Style Spec: {initial_state.get('style_spec', '')}\n\n"
                     f"Logo URL: {initial_state.get('logo_url', '')}\n"
                     f"Icon URL: {initial_state.get('icon_url', '')}\n\n"
-                    "Generate complete, self-contained HTML with inline or linked CSS/JS."
+                    "RESPOND WITH ONLY A ```html CODE BLOCK. "
+                    "No planning, no analysis, no explanation. "
+                    "Single self-contained HTML file with <style> and <script> inline. "
+                    "Start your response with ```html immediately."
                 )
 
                 dev_callbacks = GroupCallbacks(
@@ -458,13 +486,14 @@ class GenerationPipeline:
                     [(dev_agent_plain, "{dev_prompt}")],
                     callbacks=dev_callbacks,
                     state={"dev_prompt": dev_prompt},
+                    error_policy=ErrorPolicy.raise_on_error,
                 )
                 _patch_pipeline_deps(dev_pipeline_plain, deps)
                 plain_result = dev_pipeline_plain.run(dev_prompt)
 
                 # Use the plain result's usage and state
-                if hasattr(plain_result, 'aggregate_usage'):
-                    if not hasattr(result, 'aggregate_usage'):
+                if hasattr(plain_result, "aggregate_usage"):
+                    if not hasattr(result, "aggregate_usage"):
                         result.aggregate_usage = {}
                     for k, v in plain_result.aggregate_usage.items():
                         if isinstance(v, (int, float)):
@@ -472,8 +501,8 @@ class GenerationPipeline:
                 result = plain_result
 
             # Merge usage from both phases
-            combined_usage = pm_result.aggregate_usage.copy() if hasattr(pm_result, 'aggregate_usage') else {}
-            if hasattr(result, 'aggregate_usage'):
+            combined_usage = pm_result.aggregate_usage.copy() if hasattr(pm_result, "aggregate_usage") else {}
+            if hasattr(result, "aggregate_usage"):
                 for k, v in result.aggregate_usage.items():
                     if isinstance(v, (int, float)):
                         combined_usage[k] = combined_usage.get(k, 0) + v
@@ -503,9 +532,10 @@ class GenerationPipeline:
             # extract content from its raw output text as a fallback.
             if not written_files:
                 logger.warning(
-                    "No files written via tools for project %s page %s v%d. "
-                    "page_output_text[:500]: %s",
-                    project.id, slug, version_number,
+                    "No files written via tools for project %s page %s v%d. page_output_text[:500]: %s",
+                    project.id,
+                    slug,
+                    version_number,
                     (page_output_text or "")[:500],
                 )
                 if page_output_text:
@@ -520,9 +550,7 @@ class GenerationPipeline:
                     "No files on disk — trying extraction from %d tool_calls",
                     len(self._developer_tool_calls),
                 )
-                self._write_files_from_tool_calls(
-                    project.id, slug, version_number, self._developer_tool_calls
-                )
+                self._write_files_from_tool_calls(project.id, slug, version_number, self._developer_tool_calls)
                 final_files = self._pm.list_version_files(project.id, slug, version_number)
 
             if not final_files:
@@ -534,7 +562,8 @@ class GenerationPipeline:
                     if source_text:
                         logger.warning(
                             "No files on disk — trying text fallback from %s (length=%d)",
-                            source_name, len(source_text),
+                            source_name,
+                            len(source_text),
                         )
                         self._write_files_from_output(project.id, slug, version_number, source_text)
                         final_files = self._pm.list_version_files(project.id, slug, version_number)
@@ -545,7 +574,9 @@ class GenerationPipeline:
                 logger.error(
                     "Generation produced no files for project %s page %s v%d. "
                     "tool_calls=%d, developer_output_text[:500]=%s",
-                    project.id, slug, version_number,
+                    project.id,
+                    slug,
+                    version_number,
                     len(self._developer_tool_calls),
                     self._developer_output_text[:500],
                 )
@@ -562,14 +593,17 @@ class GenerationPipeline:
                 if content is not None:
                     files_content[fpath] = content
 
-            self._emit("generation_complete", data={
-                "success": result.success,
-                "slug": slug,
-                "version": version_number,
-                "files": final_files,
-                "files_content": files_content,
-                "usage": combined_usage,
-            })
+            self._emit(
+                "generation_complete",
+                data={
+                    "success": result.success,
+                    "slug": slug,
+                    "version": version_number,
+                    "files": final_files,
+                    "files_content": files_content,
+                    "usage": combined_usage,
+                },
+            )
 
             # Return a result-like object with combined usage
             result.aggregate_usage = combined_usage
@@ -577,20 +611,22 @@ class GenerationPipeline:
 
         except Exception as exc:
             import traceback
+
             logger.exception("Generation failed for project %s page %s v%d", project.id, slug, version_number)
             self._emit("error", data={"message": str(exc), "traceback": traceback.format_exc()})
-            self._emit("generation_complete", data={
-                "success": False,
-                "slug": slug,
-                "version": version_number,
-                "files": [],
-                "error": str(exc),
-            })
+            self._emit(
+                "generation_complete",
+                data={
+                    "success": False,
+                    "slug": slug,
+                    "version": version_number,
+                    "files": [],
+                    "error": str(exc),
+                },
+            )
             raise
 
-    def _write_files_from_tool_calls(
-        self, project_id: str, slug: str, version: int, tool_calls: list[dict]
-    ) -> None:
+    def _write_files_from_tool_calls(self, project_id: str, slug: str, version: int, tool_calls: list[dict]) -> None:
         """Extract files from write_file tool call arguments and write them to disk."""
         for tc in tool_calls:
             name = tc.get("name", "")
@@ -609,9 +645,43 @@ class GenerationPipeline:
                 except Exception:
                     logger.warning("Failed to write file from tool_call: %s", path, exc_info=True)
 
-    def _write_files_from_output(
-        self, project_id: str, slug: str, version: int, output_text: str
-    ) -> None:
+    @staticmethod
+    def _strip_reasoning_preamble(text: str) -> str:
+        """Strip reasoning/thinking preamble from model output.
+
+        Some models (e.g. Kimi K2.5) emit chain-of-thought reasoning before
+        the actual code.  This helper removes everything before the first
+        code fence or HTML tag so extraction can find the real content.
+        """
+        import re
+
+        # If the text starts with a code fence, nothing to strip
+        if text.lstrip().startswith("```"):
+            return text
+
+        # Try to find the first ```html or ```css or ```js fence
+        fence_match = re.search(r"```(?:html|css|javascript|js)\b", text, re.IGNORECASE)
+        if fence_match:
+            stripped = text[fence_match.start() :]
+            logger.info(
+                "Stripped %d chars of reasoning preamble before code fence",
+                fence_match.start(),
+            )
+            return stripped
+
+        # Try to find raw HTML (<!DOCTYPE or <html)
+        html_match = re.search(r"<!DOCTYPE\s+html|<html[\s>]", text, re.IGNORECASE)
+        if html_match:
+            stripped = text[html_match.start() :]
+            logger.info(
+                "Stripped %d chars of reasoning preamble before HTML",
+                html_match.start(),
+            )
+            return stripped
+
+        return text
+
+    def _write_files_from_output(self, project_id: str, slug: str, version: int, output_text: str) -> None:
         """Parse PageOutput JSON from output text and write files."""
         try:
             from prompture import clean_json_text
@@ -628,15 +698,16 @@ class GenerationPipeline:
                 len(output_text),
                 exc_info=True,
             )
+            # Strip reasoning/thinking preamble that some models emit
+            cleaned_text = self._strip_reasoning_preamble(output_text)
+
             # Try extracting markdown-fenced code blocks first
-            wrote_fenced = self._extract_fenced_blocks(project_id, slug, version, output_text)
+            wrote_fenced = self._extract_fenced_blocks(project_id, slug, version, cleaned_text)
             if not wrote_fenced:
                 # Last resort: if the output contains raw HTML, save it as index.html
-                self._try_extract_raw_html(project_id, slug, version, output_text)
+                self._try_extract_raw_html(project_id, slug, version, cleaned_text)
 
-    def _extract_fenced_blocks(
-        self, project_id: str, slug: str, version: int, text: str
-    ) -> bool:
+    def _extract_fenced_blocks(self, project_id: str, slug: str, version: int, text: str) -> bool:
         """Extract markdown-fenced code blocks (```html, ```css, ```js) and write them.
 
         Returns True if at least one file was written.
@@ -678,9 +749,7 @@ class GenerationPipeline:
 
         return wrote_any
 
-    def _try_extract_raw_html(
-        self, project_id: str, slug: str, version: int, text: str
-    ) -> None:
+    def _try_extract_raw_html(self, project_id: str, slug: str, version: int, text: str) -> None:
         """Attempt to extract raw HTML from agent output as a last resort."""
         import re
 
@@ -705,5 +774,14 @@ class GenerationPipeline:
                 css_content = "\n\n".join(style_blocks)
                 self._pm.write_version_file(project_id, slug, version, "styles.css", css_content)
                 logger.info("Extracted CSS fallback as styles.css (%d bytes)", len(css_content))
+
+            # Also try to extract <script> blocks into script.js
+            script_blocks = re.findall(r"<script[^>]*>([\s\S]*?)</script>", html_content, re.IGNORECASE)
+            # Filter out empty scripts and external src references
+            script_blocks = [s.strip() for s in script_blocks if s.strip()]
+            if script_blocks:
+                js_content = "\n\n".join(script_blocks)
+                self._pm.write_version_file(project_id, slug, version, "script.js", js_content)
+                logger.info("Extracted JS fallback as script.js (%d bytes)", len(js_content))
         else:
             logger.error("No HTML content found in developer output (length=%d)", len(text))

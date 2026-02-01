@@ -147,7 +147,9 @@ export default function PageBuilderPage() {
         input_tokens: agentData.input_tokens || 0,
         output_tokens: agentData.output_tokens || 0,
         output_preview: agentData.output_preview || "",
+        full_output: agentData.full_output || "",
         tool_calls_count: agentData.tool_calls_count || 0,
+        model: agentData.model || "",
       };
     });
 

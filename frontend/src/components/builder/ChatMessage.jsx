@@ -1,5 +1,5 @@
 import { useState, useEffect } from "react";
-import { Sparkle, WarningCircle, SpinnerGap, CheckCircle, CaretDown, CaretRight, Timer, Lightning, Terminal } from "@phosphor-icons/react";
+import { Sparkle, WarningCircle, SpinnerGap, CheckCircle, CaretDown, CaretRight, Timer, Lightning, Terminal, Copy, ArrowsOut, X, Export } from "@phosphor-icons/react";
 
 function formatDuration(seconds) {
   if (seconds < 60) return `${Math.round(seconds * 10) / 10}s`;
@@ -12,6 +12,12 @@ function formatTokens(n) {
   if (n < 1000) return String(n);
   if (n < 1_000_000) return `${(n / 1000).toFixed(1).replace(/\.0$/, "")}k`;
   return `${(n / 1_000_000).toFixed(1).replace(/\.0$/, "")}M`;
+}
+
+function shortModelName(model) {
+  if (!model) return null;
+  const parts = model.split("/");
+  return parts[parts.length - 1];
 }
 
 function ElapsedTimer({ since }) {
@@ -29,7 +35,20 @@ function ElapsedTimer({ since }) {
 
 function AgentRow({ agent: a }) {
   const [showOutput, setShowOutput] = useState(false);
-  const hasOutput = a.status === "complete" && a.output_preview;
+  const [showFullModal, setShowFullModal] = useState(false);
+  const [copied, setCopied] = useState(false);
+  const hasOutput = a.status === "complete" && (a.output_preview || a.full_output);
+  const fullText = a.full_output || a.output_preview || "";
+  const hasMore = fullText.length > (a.output_preview || "").length;
+
+  const handleCopy = async (e) => {
+    e.stopPropagation();
+    try {
+      await navigator.clipboard.writeText(fullText);
+      setCopied(true);
+      setTimeout(() => setCopied(false), 1500);
+    } catch {}
+  };
 
   return (
     <div>
@@ -45,6 +64,9 @@ function AgentRow({ agent: a }) {
         )}
         <span className={`flex-1 ${a.status === "pending" ? "text-slate-500" : "text-slate-300"}`}>
           {a.label}
+          {a.model && (
+            <span className="ml-1.5 text-[10px] text-slate-600 font-normal" title={a.model}>{shortModelName(a.model)}</span>
+          )}
         </span>
         {a.status === "running" && a.startedAt && (
           <ElapsedTimer since={a.startedAt} />
@@ -58,26 +80,99 @@ function AgentRow({ agent: a }) {
           </span>
         )}
         {hasOutput && (
-          <button
-            onClick={() => setShowOutput((s) => !s)}
-            className="text-slate-500 hover:text-slate-300 transition-colors cursor-pointer"
-            title="Show agent output"
-          >
-            <Terminal size={12} />
-          </button>
+          <div className="flex items-center gap-1">
+            <button
+              onClick={() => setShowOutput((s) => !s)}
+              className="text-slate-500 hover:text-slate-300 transition-colors cursor-pointer"
+              title="Show agent output"
+            >
+              <Terminal size={12} />
+            </button>
+            <button
+              onClick={handleCopy}
+              className="text-slate-500 hover:text-slate-300 transition-colors cursor-pointer"
+              title={copied ? "Copied!" : "Copy output"}
+            >
+              <Copy size={12} weight={copied ? "fill" : "regular"} />
+            </button>
+            {hasMore && (
+              <button
+                onClick={() => setShowFullModal(true)}
+                className="text-slate-500 hover:text-slate-300 transition-colors cursor-pointer"
+                title="View full output"
+              >
+                <ArrowsOut size={12} />
+              </button>
+            )}
+          </div>
         )}
       </div>
-      {showOutput && a.output_preview && (
+      {showOutput && (a.output_preview || a.full_output) && (
         <pre className="mt-1.5 mb-1 text-[11px] text-slate-400 whitespace-pre-wrap font-mono overflow-x-auto max-h-48 overflow-y-auto bg-slate-950 rounded-lg p-2.5 border border-slate-800">
-          {a.output_preview}
+          {a.output_preview || a.full_output}
         </pre>
+      )}
+      {showFullModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm" onClick={() => setShowFullModal(false)}>
+          <div className="bg-slate-900 border border-slate-700 rounded-xl shadow-2xl w-[90vw] max-w-3xl max-h-[80vh] flex flex-col" onClick={(e) => e.stopPropagation()}>
+            <div className="flex items-center justify-between px-4 py-3 border-b border-slate-800">
+              <span className="text-sm font-medium text-slate-300">{a.label} — Full Output</span>
+              <div className="flex items-center gap-2">
+                <button onClick={handleCopy} className="text-slate-400 hover:text-slate-200 transition-colors cursor-pointer text-xs flex items-center gap-1">
+                  <Copy size={14} weight={copied ? "fill" : "regular"} />
+                  {copied ? "Copied" : "Copy"}
+                </button>
+                <button onClick={() => setShowFullModal(false)} className="text-slate-400 hover:text-slate-200 transition-colors cursor-pointer">
+                  <X size={16} />
+                </button>
+              </div>
+            </div>
+            <pre className="flex-1 overflow-auto p-4 text-[11px] text-slate-400 whitespace-pre-wrap font-mono">
+              {fullText}
+            </pre>
+          </div>
+        </div>
       )}
     </div>
   );
 }
 
+function buildAgentLogs(agents) {
+  const lines = [];
+  lines.push(`=== AgentSite Pipeline Log ===`);
+  lines.push(`Timestamp: ${new Date().toISOString()}`);
+  lines.push("");
+
+  for (const a of agents) {
+    lines.push(`--- ${a.label} ${a.model ? `(${a.model})` : ""} ---`);
+    lines.push(`Status: ${a.status}`);
+    if (a.duration_s != null) lines.push(`Duration: ${formatDuration(a.duration_s)}`);
+    if (a.input_tokens || a.output_tokens) {
+      lines.push(`Tokens: ${(a.input_tokens || 0).toLocaleString()} in / ${(a.output_tokens || 0).toLocaleString()} out`);
+    }
+    if (a.tool_calls_count) lines.push(`Tool calls: ${a.tool_calls_count}`);
+    if (a.error) lines.push(`Error: ${a.error}`);
+    const output = a.full_output || a.output_preview;
+    if (output) {
+      lines.push("");
+      lines.push("Output:");
+      lines.push(output);
+    }
+    lines.push("");
+  }
+
+  const totalDuration = agents.reduce((s, a) => s + (a.duration_s || 0), 0);
+  const totalTokens = agents.reduce((s, a) => s + (a.input_tokens || 0) + (a.output_tokens || 0), 0);
+  lines.push(`--- Totals ---`);
+  lines.push(`Duration: ${formatDuration(totalDuration)}`);
+  lines.push(`Tokens: ${totalTokens.toLocaleString()}`);
+
+  return lines.join("\n");
+}
+
 function AgentProgressMessage({ message }) {
   const [expanded, setExpanded] = useState(false);
+  const [logsCopied, setLogsCopied] = useState(false);
   const { agents = [], done } = message;
 
   const current = agents.find((a) => a.status === "running");
@@ -127,6 +222,20 @@ function AgentProgressMessage({ message }) {
                 <span title={`${agents.reduce((s, a) => s + (a.input_tokens || 0) + (a.output_tokens || 0), 0).toLocaleString()} tokens`}>
                   {formatTokens(agents.reduce((s, a) => s + (a.input_tokens || 0) + (a.output_tokens || 0), 0))} tokens
                 </span>
+                <button
+                  onClick={async () => {
+                    try {
+                      await navigator.clipboard.writeText(buildAgentLogs(agents));
+                      setLogsCopied(true);
+                      setTimeout(() => setLogsCopied(false), 1500);
+                    } catch {}
+                  }}
+                  className="ml-auto flex items-center gap-1 text-slate-500 hover:text-slate-300 transition-colors cursor-pointer"
+                  title="Copy full pipeline logs to clipboard"
+                >
+                  <Export size={12} />
+                  <span>{logsCopied ? "Copied" : "Export Logs"}</span>
+                </button>
               </div>
             )}
           </div>

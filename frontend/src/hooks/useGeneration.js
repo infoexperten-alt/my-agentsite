@@ -29,7 +29,20 @@ export default function useGeneration(projectId) {
             input_tokens: msg.data?.input_tokens,
             output_tokens: msg.data?.output_tokens,
             output_preview: msg.data?.output_preview || "",
+            full_output: msg.data?.full_output || "",
             tool_calls_count: msg.data?.tool_calls_count || 0,
+          },
+        }));
+      }),
+      // Non-fatal agent error — the pipeline may retry with a fallback.
+      // Mark the agent as retrying without disconnecting the WebSocket.
+      ws.on("agent_error", (msg) => {
+        setAgents((prev) => ({
+          ...prev,
+          [msg.agent]: {
+            ...prev[msg.agent],
+            status: "retrying",
+            error: msg.data?.message,
           },
         }));
       }),
