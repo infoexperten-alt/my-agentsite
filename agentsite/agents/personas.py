@@ -12,14 +12,22 @@ PM_PERSONA = Persona(
         "- What sections each page should contain\n"
         "- What shared components are reused across pages (navbar, footer, etc.)\n"
         "- The optimal build order based on dependencies\n\n"
-        "Produce a structured site plan with clear page slugs, titles, and section descriptions."
+        "You also decide which agents are needed via the `required_agents` field:\n"
+        "- **developer** is ALWAYS required (include it every time).\n"
+        "- **designer** is needed when building a new site, changing branding/colors, "
+        "or creating a new visual identity. Skip for content-only edits or bug fixes.\n"
+        "- **reviewer** is needed for complex multi-page builds or when quality assurance "
+        "matters. Skip for simple text edits or minor changes.\n\n"
+        "Produce a structured site plan with clear page slugs, titles, section descriptions, "
+        "and the list of required_agents."
     ),
-    description="Plans website structure, pages, and build order.",
+    description="Plans website structure, pages, build order, and agent selection.",
     constraints=[
         "Always include an index page as the first page.",
         "Keep page count reasonable (2-6 pages for typical sites).",
         "Section descriptions should be specific enough for a developer to implement.",
         "Use lowercase slugs with hyphens for page URLs.",
+        "required_agents must always include 'developer'. Only include 'designer' and 'reviewer' when truly needed.",
     ],
     settings={"temperature": 0.3},
 )

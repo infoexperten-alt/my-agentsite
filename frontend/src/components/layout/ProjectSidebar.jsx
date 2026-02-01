@@ -41,14 +41,32 @@ export default function ProjectSidebar() {
             <Kanban size={20} />
             <span className="font-medium">Overview & Pages</span>
           </NavLink>
-          <button className="flex items-center gap-3 px-3 py-2.5 rounded-lg hover:bg-slate-900 hover:text-white transition-colors w-full text-left">
+          <NavLink
+            to={`/project/${projectId}/settings?tab=brand`}
+            className={({ isActive }) =>
+              `flex items-center gap-3 px-3 py-2.5 rounded-lg transition-colors ${
+                isActive
+                  ? "bg-brand-500/10 text-brand-500 border border-brand-500/10"
+                  : "hover:bg-slate-900 hover:text-white"
+              }`
+            }
+          >
             <PaintBrush size={20} />
             <span className="font-medium">Global Styles</span>
-          </button>
-          <button className="flex items-center gap-3 px-3 py-2.5 rounded-lg hover:bg-slate-900 hover:text-white transition-colors w-full text-left">
+          </NavLink>
+          <NavLink
+            to={`/project/${projectId}/settings?tab=general`}
+            className={({ isActive }) =>
+              `flex items-center gap-3 px-3 py-2.5 rounded-lg transition-colors ${
+                isActive
+                  ? "bg-brand-500/10 text-brand-500 border border-brand-500/10"
+                  : "hover:bg-slate-900 hover:text-white"
+              }`
+            }
+          >
             <Gear size={20} />
             <span className="font-medium">Settings</span>
-          </button>
+          </NavLink>
         </nav>
       </div>
     </aside>

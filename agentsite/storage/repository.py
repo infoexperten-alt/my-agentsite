@@ -6,7 +6,7 @@ import json
 from datetime import datetime, timezone
 from typing import Any
 
-from ..models import Page, PageVersion, Project, StyleSpec
+from ..models import AgentConfig, AgentRun, Page, PageVersion, Project, StyleSpec
 from .database import Database
 
 
@@ -271,4 +271,181 @@ class VersionRepository:
             error=row["error"],
             created_at=row["created_at"],
             completed_at=row["completed_at"],
+        )
+
+
+class AgentConfigRepository:
+    """CRUD operations for agent configurations."""
+
+    def __init__(self, db: Database) -> None:
+        self._db = db
+
+    async def list_all(self) -> list[AgentConfig]:
+        """Fetch all agent configs."""
+        cursor = await self._db.conn.execute(
+            "SELECT * FROM agent_configs ORDER BY agent_name"
+        )
+        rows = await cursor.fetchall()
+        return [self._row_to_config(row) for row in rows]
+
+    async def get(self, agent_name: str) -> AgentConfig | None:
+        """Fetch a single agent config by name."""
+        cursor = await self._db.conn.execute(
+            "SELECT * FROM agent_configs WHERE agent_name = ?", (agent_name,)
+        )
+        row = await cursor.fetchone()
+        if row is None:
+            return None
+        return self._row_to_config(row)
+
+    async def update(self, config: AgentConfig) -> None:
+        """Update an agent config."""
+        config.updated_at = datetime.now(timezone.utc).isoformat()
+        await self._db.conn.execute(
+            """UPDATE agent_configs SET enabled=?, model=?, temperature=?,
+               system_prompt_override=?, updated_at=? WHERE agent_name=?""",
+            (
+                1 if config.enabled else 0,
+                config.model,
+                config.temperature,
+                config.system_prompt_override,
+                config.updated_at,
+                config.agent_name,
+            ),
+        )
+        await self._db.conn.commit()
+
+    @staticmethod
+    def _row_to_config(row: Any) -> AgentConfig:
+        return AgentConfig(
+            agent_name=row["agent_name"],
+            enabled=bool(row["enabled"]),
+            model=row["model"],
+            temperature=row["temperature"],
+            system_prompt_override=row["system_prompt_override"],
+            updated_at=row["updated_at"],
+        )
+
+
+class AgentRunRepository:
+    """CRUD operations for agent run records."""
+
+    def __init__(self, db: Database) -> None:
+        self._db = db
+
+    async def create(self, run: AgentRun) -> AgentRun:
+        """Insert a new agent run."""
+        await self._db.conn.execute(
+            """INSERT INTO agent_runs
+               (id, project_id, page_slug, version, agent_name, status,
+                started_at, completed_at, input_tokens, output_tokens, cost, output_summary)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+            (
+                run.id,
+                run.project_id,
+                run.page_slug,
+                run.version,
+                run.agent_name,
+                run.status,
+                run.started_at,
+                run.completed_at,
+                run.input_tokens,
+                run.output_tokens,
+                run.cost,
+                json.dumps(run.output_summary),
+            ),
+        )
+        await self._db.conn.commit()
+        return run
+
+    async def update(self, run: AgentRun) -> None:
+        """Update an agent run record."""
+        await self._db.conn.execute(
+            """UPDATE agent_runs SET status=?, completed_at=?,
+               input_tokens=?, output_tokens=?, cost=?, output_summary=?
+               WHERE id=?""",
+            (
+                run.status,
+                run.completed_at,
+                run.input_tokens,
+                run.output_tokens,
+                run.cost,
+                json.dumps(run.output_summary),
+                run.id,
+            ),
+        )
+        await self._db.conn.commit()
+
+    async def list_recent(self, limit: int = 50) -> list[AgentRun]:
+        """List recent agent runs ordered by start time."""
+        cursor = await self._db.conn.execute(
+            "SELECT * FROM agent_runs ORDER BY started_at DESC LIMIT ?", (limit,)
+        )
+        rows = await cursor.fetchall()
+        return [self._row_to_run(row) for row in rows]
+
+    async def get_stats(self) -> dict:
+        """Get aggregated agent stats."""
+        cursor = await self._db.conn.execute("""
+            SELECT
+                agent_name,
+                COUNT(*) as total_runs,
+                SUM(input_tokens) as total_input_tokens,
+                SUM(output_tokens) as total_output_tokens,
+                SUM(cost) as total_cost,
+                AVG(
+                    CASE WHEN completed_at IS NOT NULL AND started_at IS NOT NULL
+                    THEN (julianday(completed_at) - julianday(started_at)) * 86400
+                    ELSE NULL END
+                ) as avg_duration_seconds
+            FROM agent_runs
+            WHERE status = 'completed'
+            GROUP BY agent_name
+        """)
+        rows = await cursor.fetchall()
+        per_agent = {}
+        total_runs = 0
+        total_cost = 0.0
+        total_duration = 0.0
+        duration_count = 0
+        for row in rows:
+            name = row["agent_name"]
+            runs = row["total_runs"]
+            cost = row["total_cost"] or 0.0
+            avg_dur = row["avg_duration_seconds"]
+            per_agent[name] = {
+                "total_runs": runs,
+                "total_input_tokens": row["total_input_tokens"] or 0,
+                "total_output_tokens": row["total_output_tokens"] or 0,
+                "total_cost": round(cost, 4),
+                "avg_duration_seconds": round(avg_dur, 1) if avg_dur else None,
+            }
+            total_runs += runs
+            total_cost += cost
+            if avg_dur is not None:
+                total_duration += avg_dur * runs
+                duration_count += runs
+
+        return {
+            "total_runs": total_runs,
+            "total_cost": round(total_cost, 4),
+            "avg_duration_seconds": round(total_duration / duration_count, 1) if duration_count else None,
+            "per_agent": per_agent,
+        }
+
+    @staticmethod
+    def _row_to_run(row: Any) -> AgentRun:
+        return AgentRun(
+            id=row["id"],
+            project_id=row["project_id"],
+            page_slug=row["page_slug"],
+            version=row["version"],
+            agent_name=row["agent_name"],
+            status=row["status"],
+            started_at=row["started_at"],
+            completed_at=row["completed_at"],
+            input_tokens=row["input_tokens"],
+            output_tokens=row["output_tokens"],
+            cost=row["cost"],
+            output_summary=json.loads(row["output_summary"]) if row["output_summary"] else {},
         )

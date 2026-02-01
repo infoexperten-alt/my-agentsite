@@ -13,7 +13,7 @@ from fastapi.staticfiles import StaticFiles
 
 from ..config import settings
 from . import deps
-from .routes import assets, generate, models, preview, projects, providers
+from .routes import agents, assets, generate, models, preview, projects, providers
 from .websocket import ws_manager
 
 logger = logging.getLogger("agentsite.api")
@@ -42,6 +42,8 @@ async def lifespan(app: FastAPI):
     deps.project_repo = deps.ProjectRepository(deps.db)
     deps.page_repo = deps.PageRepository(deps.db)
     deps.version_repo = deps.VersionRepository(deps.db)
+    deps.agent_config_repo = deps.AgentConfigRepository(deps.db)
+    deps.agent_run_repo = deps.AgentRunRepository(deps.db)
     logger.info("AgentSite started — data dir: %s", settings.data_dir)
     yield
     await deps.db.close()
@@ -73,6 +75,7 @@ def create_app() -> FastAPI:
     app.include_router(assets.router)
     app.include_router(preview.router)
     app.include_router(providers.router)
+    app.include_router(agents.router)
 
     # Serve frontend static files
     if FRONTEND_DIR.exists():

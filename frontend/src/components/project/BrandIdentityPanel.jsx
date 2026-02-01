@@ -55,14 +55,17 @@ function TypographyDisplay({ styleSpec }) {
   );
 }
 
-export default function BrandIdentityPanel({ project }) {
+export default function BrandIdentityPanel({ project, onEditBrand }) {
   const styleSpec = project?.style_spec;
 
   return (
     <div className="space-y-6">
       <div className="flex items-center justify-between">
         <h2 className="text-xl font-bold text-white">Brand Identity</h2>
-        <button className="text-xs text-brand-400 hover:text-brand-300 font-medium">
+        <button
+          onClick={onEditBrand}
+          className="text-xs text-brand-400 hover:text-brand-300 font-medium"
+        >
           Edit Brand
         </button>
       </div>
@@ -74,9 +77,17 @@ export default function BrandIdentityPanel({ project }) {
           </label>
           <div className="flex items-center gap-4">
             <div className="w-16 h-16 rounded-lg bg-black border border-slate-700 flex items-center justify-center relative group cursor-pointer overflow-hidden">
-              <span className="text-2xl text-white">
-                {project?.name?.[0]?.toUpperCase() || "?"}
-              </span>
+              {project?.logo_url ? (
+                <img
+                  src={`/preview/${project.id}/assets/${project.logo_url}`}
+                  alt="Logo"
+                  className="w-full h-full object-contain"
+                />
+              ) : (
+                <span className="text-2xl text-white">
+                  {project?.name?.[0]?.toUpperCase() || "?"}
+                </span>
+              )}
               <div className="absolute inset-0 bg-black/60 flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity">
                 <UploadSimple className="text-white" size={20} />
               </div>

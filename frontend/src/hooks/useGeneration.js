@@ -7,6 +7,7 @@ export default function useGeneration(projectId) {
   const [agents, setAgents] = useState({});
   const [files, setFiles] = useState([]);
   const [error, setError] = useState(null);
+  const [pipelineAgents, setPipelineAgents] = useState(null);
   const ws = useWebSocket(projectId);
   const versionRefreshRef = useRef(null);
 
@@ -27,13 +28,28 @@ export default function useGeneration(projectId) {
       ws.on("file_written", (msg) => {
         setFiles((prev) => [...prev, msg.data]);
       }),
-      ws.on("generation_complete", () => {
+      ws.on("pipeline_plan", (msg) => {
+        const agents = msg.data?.required_agents;
+        if (agents && agents.length > 0) {
+          setPipelineAgents(agents);
+        }
+      }),
+      ws.on("generation_complete", (msg) => {
         setGenerating(false);
+        if (msg.data?.success === false && msg.data?.error) {
+          setError(msg.data.error);
+        }
         ws.disconnect();
         versionRefreshRef.current?.();
       }),
       ws.on("error", (msg) => {
-        setError(msg.data?.message || "Generation failed");
+        setError((prev) => {
+          // Avoid overwriting with a second error from the same failure
+          if (prev) return prev;
+          const detail = msg.data?.message || "Generation failed";
+          const tb = msg.data?.traceback;
+          return tb ? `${detail}\n\n${tb}` : detail;
+        });
         setGenerating(false);
         ws.disconnect();
       }),
@@ -47,6 +63,7 @@ export default function useGeneration(projectId) {
       setAgents({});
       setFiles([]);
       setError(null);
+      setPipelineAgents(null);
       ws.connect();
       try {
         await startGeneration(projectId, slug, data);
@@ -63,5 +80,5 @@ export default function useGeneration(projectId) {
     versionRefreshRef.current = fn;
   }, []);
 
-  return { generating, agents, files, error, start, onVersionRefresh };
+  return { generating, agents, files, error, pipelineAgents, start, onVersionRefresh };
 }

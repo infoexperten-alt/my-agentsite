@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { useParams } from "react-router-dom";
+import { useParams, useNavigate } from "react-router-dom";
 import { Plus, CaretRight, Globe } from "@phosphor-icons/react";
 import useProject from "../hooks/useProject";
 import PageCard from "../components/project/PageCard";
@@ -11,6 +11,7 @@ import Spinner from "../components/shared/Spinner";
 
 export default function ProjectPage() {
   const { projectId } = useParams();
+  const navigate = useNavigate();
   const { project, pages, loading, createPage, removePage } =
     useProject(projectId);
   const [showCreate, setShowCreate] = useState(false);
@@ -112,7 +113,12 @@ export default function ProjectPage() {
 
           {/* Brand panel */}
           <div className="lg:col-span-4">
-            <BrandIdentityPanel project={project} />
+            <BrandIdentityPanel
+              project={project}
+              onEditBrand={() =>
+                navigate(`/project/${projectId}/settings?tab=brand`)
+              }
+            />
           </div>
         </div>
       </div>

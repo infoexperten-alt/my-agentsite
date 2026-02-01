@@ -55,7 +55,10 @@ export default function AppSidebar() {
             <Key size={20} />
             <span className="font-medium">API Keys</span>
           </button>
-          <button className="flex items-center gap-3 px-3 py-2.5 rounded-lg hover:bg-slate-900 hover:text-white transition-colors w-full text-left">
+          <button
+            onClick={() => setSettingsOpen(true)}
+            className="flex items-center gap-3 px-3 py-2.5 rounded-lg hover:bg-slate-900 hover:text-white transition-colors w-full text-left"
+          >
             <Gear size={20} />
             <span className="font-medium">General</span>
           </button>

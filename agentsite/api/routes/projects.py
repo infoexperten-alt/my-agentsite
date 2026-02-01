@@ -5,7 +5,7 @@ from __future__ import annotations
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 
-from ...models import Page, Project
+from ...models import Page, Project, StyleSpec
 from ..deps import get_page_repo, get_pm, get_repo, get_version_repo
 
 router = APIRouter(prefix="/api/projects", tags=["projects"])
@@ -17,6 +17,15 @@ class CreateProjectRequest(BaseModel):
     name: str = "Untitled Project"
     description: str = ""
     model: str = ""
+
+
+class UpdateProjectRequest(BaseModel):
+    name: str | None = None
+    description: str | None = None
+    model: str | None = None
+    logo_url: str | None = None
+    icon_url: str | None = None
+    style_spec: dict | None = None
 
 
 class CreatePageRequest(BaseModel):
@@ -45,6 +54,27 @@ async def get_project(project_id: str, repo=Depends(get_repo)):
     project = await repo.get(project_id)
     if project is None:
         raise HTTPException(status_code=404, detail="Project not found")
+    return project
+
+
+@router.put("/{project_id}", response_model=Project)
+async def update_project(project_id: str, req: UpdateProjectRequest, repo=Depends(get_repo)):
+    project = await repo.get(project_id)
+    if project is None:
+        raise HTTPException(status_code=404, detail="Project not found")
+    if req.name is not None:
+        project.name = req.name
+    if req.description is not None:
+        project.description = req.description
+    if req.model is not None:
+        project.model = req.model
+    if req.logo_url is not None:
+        project.logo_url = req.logo_url
+    if req.icon_url is not None:
+        project.icon_url = req.icon_url
+    if req.style_spec is not None:
+        project.style_spec = StyleSpec.model_validate(req.style_spec)
+    await repo.update(project)
     return project
 
 

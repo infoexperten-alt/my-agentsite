@@ -5,7 +5,13 @@ from __future__ import annotations
 from ..engine.asset_handler import AssetHandler
 from ..engine.project_manager import ProjectManager
 from ..storage.database import Database
-from ..storage.repository import PageRepository, ProjectRepository, VersionRepository
+from ..storage.repository import (
+    AgentConfigRepository,
+    AgentRunRepository,
+    PageRepository,
+    ProjectRepository,
+    VersionRepository,
+)
 
 # Singleton instances (initialized in app lifespan)
 db = Database()
@@ -14,6 +20,8 @@ asset_handler = AssetHandler(project_manager)
 project_repo: ProjectRepository | None = None
 page_repo: PageRepository | None = None
 version_repo: VersionRepository | None = None
+agent_config_repo: AgentConfigRepository | None = None
+agent_run_repo: AgentRunRepository | None = None
 
 
 async def get_db() -> Database:
@@ -36,6 +44,18 @@ async def get_version_repo() -> VersionRepository:
     if version_repo is None:
         raise RuntimeError("Version repository not initialized")
     return version_repo
+
+
+async def get_agent_config_repo() -> AgentConfigRepository:
+    if agent_config_repo is None:
+        raise RuntimeError("Agent config repository not initialized")
+    return agent_config_repo
+
+
+async def get_agent_run_repo() -> AgentRunRepository:
+    if agent_run_repo is None:
+        raise RuntimeError("Agent run repository not initialized")
+    return agent_run_repo
 
 
 async def get_pm() -> ProjectManager:

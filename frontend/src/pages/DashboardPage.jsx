@@ -1,4 +1,5 @@
-import { useState, useMemo } from "react";
+import { useState, useMemo, useEffect } from "react";
+import { useSearchParams } from "react-router-dom";
 import useProjects from "../hooks/useProjects";
 import { useApp } from "../context/AppContext";
 import ProjectCard from "../components/dashboard/ProjectCard";
@@ -10,8 +11,16 @@ import Spinner from "../components/shared/Spinner";
 export default function DashboardPage() {
   const { projects, loading, create, remove } = useProjects();
   const { search } = useApp();
+  const [searchParams, setSearchParams] = useSearchParams();
   const [filter, setFilter] = useState("All");
   const [showCreate, setShowCreate] = useState(false);
+
+  useEffect(() => {
+    if (searchParams.get("new") === "1") {
+      setShowCreate(true);
+      setSearchParams({}, { replace: true });
+    }
+  }, [searchParams, setSearchParams]);
   const [newName, setNewName] = useState("");
   const [newDesc, setNewDesc] = useState("");
   const [creating, setCreating] = useState(false);

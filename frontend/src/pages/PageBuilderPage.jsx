@@ -1,4 +1,4 @@
-import { useState, useEffect, useMemo } from "react";
+import { useState, useEffect, useRef, useCallback } from "react";
 import { useParams } from "react-router-dom";
 import useProject from "../hooks/useProject";
 import useVersions from "../hooks/useVersions";
@@ -12,7 +12,6 @@ import PreviewFrame from "../components/builder/PreviewFrame";
 import VersionSelector from "../components/builder/VersionSelector";
 import ZoomControls from "../components/builder/ZoomControls";
 import ProgressPipeline from "../components/builder/ProgressPipeline";
-import Spinner from "../components/shared/Spinner";
 
 export default function PageBuilderPage() {
   const { projectId, slug } = useParams();
@@ -25,6 +24,8 @@ export default function PageBuilderPage() {
   const [device, setDevice] = useState(null);
   const [zoom, setZoom] = useState(100);
   const [activeVersion, setActiveVersion] = useState(null);
+  const [refreshKey, setRefreshKey] = useState(0);
+  const prevGenerating = useRef(false);
 
   const page = pages.find((p) => p.slug === slug);
 
@@ -40,17 +41,20 @@ export default function PageBuilderPage() {
     gen.onVersionRefresh(refreshVersions);
   }, [gen, refreshVersions]);
 
-  // Build agent status text
-  const agentStatus = useMemo(() => {
-    const running = Object.entries(gen.agents).find(
-      ([, a]) => a.status === "running"
-    );
-    if (running) return `${running[0]} agent working...`;
-    return gen.generating ? "Starting pipeline..." : null;
-  }, [gen.agents, gen.generating]);
+  // Detect generation completion: refresh preview and auto-select new version
+  useEffect(() => {
+    if (prevGenerating.current && !gen.generating) {
+      setRefreshKey((k) => k + 1);
+      // Auto-select latest version after a short delay for versions to refresh
+      setTimeout(() => {
+        setActiveVersion(null); // reset so the versions useEffect picks the latest
+      }, 500);
+    }
+    prevGenerating.current = gen.generating;
+  }, [gen.generating]);
 
   const previewUrl = activeVersion
-    ? getPreviewUrl(projectId, slug, activeVersion)
+    ? getPreviewUrl(projectId, slug, activeVersion) + `?t=${refreshKey}`
     : getPreviewUrl(projectId, slug);
 
   const handleSend = async ({ text, image }) => {
@@ -81,30 +85,47 @@ export default function PageBuilderPage() {
     gen.start(slug, { prompt: text, model });
   };
 
-  // Add agent completion messages to chat
+  // Build pipeline agent labels
+  const getAgentLabel = useCallback((name) => {
+    return name.charAt(0).toUpperCase() + name.slice(1);
+  }, []);
+
+  // Maintain a single agent-progress message that updates as events arrive
   useEffect(() => {
-    const completedAgents = Object.entries(gen.agents).filter(
-      ([, a]) => a.status === "complete"
-    );
-    // We only add messages for newly completed agents
-    completedAgents.forEach(([name, data]) => {
-      const agentLabel = name.charAt(0).toUpperCase() + name.slice(1);
-      setMessages((prev) => {
-        const exists = prev.some(
-          (m) => m.role === "agent" && m.agentKey === name
-        );
-        if (exists) return prev;
-        return [
-          ...prev,
-          {
-            role: "agent",
-            content: `${agentLabel} agent completed.`,
-            agentKey: name,
-          },
-        ];
-      });
+    if (!gen.generating && Object.keys(gen.agents).length === 0) return;
+
+    const agentEntries = Object.entries(gen.agents);
+    if (agentEntries.length === 0 && !gen.pipelineAgents) return;
+
+    // Build the agents list in canonical order, filtered to those in this pipeline
+    const CANONICAL_ORDER = ["pm", "designer", "developer", "reviewer"];
+    const pipelineSet = gen.pipelineAgents || agentEntries.map(([name]) => name);
+    const knownAgents = CANONICAL_ORDER.filter((k) => pipelineSet.includes(k));
+    const agentsList = knownAgents.map((name) => ({
+      name,
+      label: getAgentLabel(name),
+      status: gen.agents[name]?.status || "pending",
+    }));
+
+    const done = !gen.generating;
+
+    setMessages((prev) => {
+      const idx = prev.findIndex((m) => m.role === "agent-progress" && m._genActive);
+      const progressMsg = {
+        role: "agent-progress",
+        agents: agentsList,
+        done,
+        _genActive: !done,
+      };
+
+      if (idx >= 0) {
+        const updated = [...prev];
+        updated[idx] = progressMsg;
+        return updated;
+      }
+      return [...prev, progressMsg];
     });
-  }, [gen.agents]);
+  }, [gen.agents, gen.generating, gen.pipelineAgents, getAgentLabel]);
 
   // Add error message
   useEffect(() => {
@@ -130,7 +151,6 @@ export default function PageBuilderPage() {
           messages={messages}
           onSend={handleSend}
           generating={gen.generating}
-          agentStatus={agentStatus}
         />
 
         <main className="flex-1 bg-[#0c0e14] relative flex flex-col items-center justify-center p-8 overflow-hidden">
@@ -151,7 +171,7 @@ export default function PageBuilderPage() {
           {/* Version selector + pipeline */}
           {(versions.length > 0 || gen.generating) && (
             <div className="absolute top-4 right-4 flex items-center gap-4 z-20">
-              {gen.generating && <ProgressPipeline agents={gen.agents} />}
+              {gen.generating && <ProgressPipeline agents={gen.agents} pipelineAgents={gen.pipelineAgents} />}
               <VersionSelector
                 versions={versions}
                 active={activeVersion}

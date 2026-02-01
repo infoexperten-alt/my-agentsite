@@ -22,6 +22,7 @@ export default function PreviewFrame({ src, width }) {
       <div className="flex-1 overflow-hidden bg-white relative">
         {src ? (
           <iframe
+            key={src}
             src={src}
             className="w-full h-full border-none"
             title="Page Preview"

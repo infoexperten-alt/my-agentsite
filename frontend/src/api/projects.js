@@ -7,6 +7,9 @@ export const getProject = (id) => fetchJSON(`/api/projects/${id}`);
 export const createProject = (data) =>
   fetchJSON("/api/projects", { method: "POST", body: JSON.stringify(data) });
 
+export const updateProject = (id, data) =>
+  fetchJSON(`/api/projects/${id}`, { method: "PUT", body: JSON.stringify(data) });
+
 export const deleteProject = (id) =>
   fetchJSON(`/api/projects/${id}`, { method: "DELETE" });
 

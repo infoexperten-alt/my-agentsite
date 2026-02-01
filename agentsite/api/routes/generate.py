@@ -12,7 +12,7 @@ from pydantic import BaseModel
 
 from ...engine.pipeline import GenerationPipeline
 from ...models import Page, PageVersion
-from ..deps import get_page_repo, get_pm, get_repo, get_version_repo
+from ..deps import get_agent_config_repo, get_agent_run_repo, get_page_repo, get_pm, get_repo, get_version_repo
 from ..websocket import ws_manager
 
 logger = logging.getLogger("agentsite.api.generate")
@@ -36,6 +36,8 @@ async def start_generation(
     page_repo=Depends(get_page_repo),
     version_repo=Depends(get_version_repo),
     pm=Depends(get_pm),
+    agent_run_repo=Depends(get_agent_run_repo),
+    agent_config_repo=Depends(get_agent_config_repo),
 ):
     """Start page generation — creates a new version and runs the pipeline."""
     project = await repo.get(project_id)
@@ -84,8 +86,12 @@ async def start_generation(
     loop = asyncio.get_running_loop()
     on_event = ws_manager.make_callback(project_id, loop)
 
+    # Load agent configs from DB for pipeline customization
+    configs_list = await agent_config_repo.list_all()
+    agent_configs = {c.agent_name: c for c in configs_list}
+
     # Build pipeline
-    pipeline = GenerationPipeline(pm, on_event=on_event)
+    pipeline = GenerationPipeline(pm, on_event=on_event, agent_configs=agent_configs)
 
     # Run in thread pool (Prompture groups are synchronous)
     async def _run():
@@ -105,11 +111,46 @@ async def start_generation(
             version.completed_at = datetime.now(timezone.utc).isoformat()
             await version_repo.update(version)
         except Exception as exc:
-            logger.exception("Generation failed")
+            import traceback as tb_mod
+            error_detail = str(exc)
+            tb = tb_mod.format_exc()
+            logger.exception("Generation failed for project %s page %s", project_id, slug)
             version.status = "failed"
-            version.error = str(exc)
+            version.error = error_detail
             version.completed_at = datetime.now(timezone.utc).isoformat()
             await version_repo.update(version)
+            # Broadcast error to WebSocket so frontend receives it.
+            # The pipeline may have already emitted its own error event,
+            # but we emit here too to cover cases where the pipeline
+            # failed before it could emit (e.g. construction errors).
+            from ...models import WSEvent
+            try:
+                await ws_manager.broadcast(
+                    project_id,
+                    WSEvent(type="error", data={"message": error_detail, "traceback": tb}),
+                )
+                await ws_manager.broadcast(
+                    project_id,
+                    WSEvent(
+                        type="generation_complete",
+                        data={
+                            "success": False,
+                            "slug": slug,
+                            "version": version_number,
+                            "files": [],
+                            "error": error_detail,
+                        },
+                    ),
+                )
+            except Exception:
+                logger.warning("Failed to broadcast error via WebSocket")
+        finally:
+            # Persist agent run records
+            for run in pipeline.agent_runs:
+                try:
+                    await agent_run_repo.create(run)
+                except Exception:
+                    logger.warning("Failed to persist agent run: %s", run.id)
 
     # Fire and forget
     asyncio.create_task(_run())

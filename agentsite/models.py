@@ -8,8 +8,8 @@ from __future__ import annotations
 
 import uuid
 from datetime import datetime, timezone
-from pydantic import BaseModel, Field
 
+from pydantic import BaseModel, Field
 
 # ------------------------------------------------------------------
 # Pipeline output models (used as Agent output_type)
@@ -34,6 +34,16 @@ class SitePlan(BaseModel):
     shared_components: list[str] = Field(
         default_factory=lambda: ["navbar", "footer"],
         description="Shared UI components across pages",
+    )
+    required_agents: list[str] = Field(
+        default_factory=lambda: ["designer", "developer", "reviewer"],
+        description=(
+            "Which agents are needed for this task. Subset of "
+            "['designer', 'developer', 'reviewer']. "
+            "Developer is always required. Designer is needed for new sites or "
+            "brand changes, not for content edits. Reviewer is needed for complex "
+            "builds, not for simple text changes."
+        ),
     )
 
 
@@ -87,6 +97,8 @@ class Project(BaseModel):
     name: str = Field(default="Untitled Project")
     description: str = Field(default="")
     model: str = Field(default="")
+    logo_url: str = Field(default="")
+    icon_url: str = Field(default="")
     style_spec: StyleSpec | None = Field(default=None)
     created_at: str = Field(default_factory=lambda: datetime.now(timezone.utc).isoformat())
     updated_at: str = Field(default_factory=lambda: datetime.now(timezone.utc).isoformat())
@@ -116,6 +128,41 @@ class PageVersion(BaseModel):
     error: str | None = Field(default=None)
     created_at: str = Field(default_factory=lambda: datetime.now(timezone.utc).isoformat())
     completed_at: str | None = Field(default=None)
+
+
+# ------------------------------------------------------------------
+# Agent configuration & run tracking
+# ------------------------------------------------------------------
+
+
+class AgentConfig(BaseModel):
+    """Server-side configuration for a pipeline agent."""
+
+    agent_name: str = Field(description="Agent key: pm, designer, developer, reviewer")
+    enabled: bool = Field(default=True, description="Whether this agent is active")
+    model: str = Field(default="", description="Model override (empty = use project default)")
+    temperature: float = Field(default=0.5, description="Sampling temperature 0-1")
+    system_prompt_override: str | None = Field(
+        default=None, description="Custom system prompt (None = use default persona)"
+    )
+    updated_at: str = Field(default_factory=lambda: datetime.now(timezone.utc).isoformat())
+
+
+class AgentRun(BaseModel):
+    """Record of a single agent execution during generation."""
+
+    id: str = Field(default_factory=lambda: uuid.uuid4().hex[:12])
+    project_id: str = Field(default="")
+    page_slug: str = Field(default="")
+    version: int = Field(default=1)
+    agent_name: str = Field(default="")
+    status: str = Field(default="running")  # running, completed, skipped, failed
+    started_at: str = Field(default_factory=lambda: datetime.now(timezone.utc).isoformat())
+    completed_at: str | None = Field(default=None)
+    input_tokens: int = Field(default=0)
+    output_tokens: int = Field(default=0)
+    cost: float = Field(default=0.0)
+    output_summary: dict = Field(default_factory=dict)
 
 
 # ------------------------------------------------------------------

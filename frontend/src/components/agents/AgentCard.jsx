@@ -1,8 +1,7 @@
-import { CaretDown } from "@phosphor-icons/react";
+import ModelSelect from "../shared/ModelSelect";
 
 export default function AgentCard({
   agent,
-  models,
   onChange,
 }) {
   const {
@@ -18,11 +17,17 @@ export default function AgentCard({
     model,
     creativity,
     prompt,
-    tags,
-    tagsLabel,
   } = agent;
 
-  const handleField = (field, value) => onChange(key, { ...agent, [field]: value });
+  const handleField = (field, value) => {
+    // Map frontend field names to API fields
+    const apiUpdate = {};
+    if (field === "enabled") apiUpdate.enabled = value;
+    else if (field === "model") apiUpdate.model = value;
+    else if (field === "creativity") apiUpdate.temperature = value / 100;
+    else if (field === "prompt") apiUpdate.system_prompt_override = value;
+    onChange(key, apiUpdate);
+  };
 
   return (
     <div className="bg-slate-900 border border-slate-800 rounded-xl p-6 relative overflow-hidden group hover:border-slate-700 transition-colors">
@@ -32,7 +37,7 @@ export default function AgentCard({
             className={`w-12 h-12 rounded-xl ${iconBg} ${iconColor} border ${iconBorder} flex items-center justify-center`}
             style={{ boxShadow: iconShadow }}
           >
-            <Icon size={24} />
+            {Icon && <Icon size={24} />}
           </div>
           <div>
             <h3 className="text-white font-bold text-lg">{label}</h3>
@@ -55,23 +60,11 @@ export default function AgentCard({
           <label className="block text-xs font-semibold text-slate-500 uppercase mb-2">
             Model
           </label>
-          <div className="relative">
-            <select
-              value={model}
-              onChange={(e) => handleField("model", e.target.value)}
-              className="w-full bg-slate-950 border border-slate-700 text-white text-sm rounded-lg p-2.5 focus:border-brand-500 focus:ring-1 focus:ring-brand-500 outline-none appearance-none"
-            >
-              {models.map((m) => (
-                <option key={m.id || m} value={m.id || m}>
-                  {m.name || m.id || m}
-                </option>
-              ))}
-            </select>
-            <CaretDown
-              className="absolute right-3 top-3 text-slate-500 pointer-events-none"
-              size={14}
-            />
-          </div>
+          <ModelSelect
+            value={model}
+            onChange={(val) => handleField("model", val)}
+            placeholder="Project Default"
+          />
         </div>
 
         <div>
@@ -97,31 +90,14 @@ export default function AgentCard({
           />
         </div>
 
-        {tags && (
-          <div>
-            <label className="block text-xs font-semibold text-slate-500 uppercase mb-2">
-              {tagsLabel || "Tags"}
-            </label>
-            <div className="flex gap-2 flex-wrap">
-              {tags.map((tag) => (
-                <span
-                  key={tag}
-                  className="px-2 py-1 rounded bg-slate-800 border border-slate-700 text-xs text-white"
-                >
-                  {tag}
-                </span>
-              ))}
-            </div>
-          </div>
-        )}
-
         <div>
           <label className="block text-xs font-semibold text-slate-500 uppercase mb-2">
-            System Instructions
+            System Instructions Override
           </label>
           <textarea
             value={prompt}
             onChange={(e) => handleField("prompt", e.target.value)}
+            placeholder="Leave empty to use default persona"
             className="w-full bg-slate-950 border border-slate-700 text-slate-400 text-xs font-mono rounded-lg p-3 h-20 resize-none focus:border-brand-500 focus:outline-none"
           />
         </div>

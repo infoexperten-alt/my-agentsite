@@ -9,7 +9,13 @@ from agentsite.api import deps
 from agentsite.api.app import create_app
 from agentsite.engine.project_manager import ProjectManager
 from agentsite.storage.database import Database
-from agentsite.storage.repository import PageRepository, ProjectRepository, VersionRepository
+from agentsite.storage.repository import (
+    AgentConfigRepository,
+    AgentRunRepository,
+    PageRepository,
+    ProjectRepository,
+    VersionRepository,
+)
 
 
 @pytest.fixture
@@ -24,6 +30,8 @@ async def client(tmp_path):
     deps.project_repo = ProjectRepository(deps.db)
     deps.page_repo = PageRepository(deps.db)
     deps.version_repo = VersionRepository(deps.db)
+    deps.agent_config_repo = AgentConfigRepository(deps.db)
+    deps.agent_run_repo = AgentRunRepository(deps.db)
 
     app = create_app()
     transport = ASGITransport(app=app)

@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import json
 import logging
 from pathlib import Path
 
@@ -46,6 +45,30 @@ CREATE TABLE IF NOT EXISTS versions (
     completed_at TEXT,
     UNIQUE(page_id, version_number)
 );
+
+CREATE TABLE IF NOT EXISTS agent_configs (
+    agent_name TEXT PRIMARY KEY,
+    enabled INTEGER NOT NULL DEFAULT 1,
+    model TEXT NOT NULL DEFAULT '',
+    temperature REAL NOT NULL DEFAULT 0.5,
+    system_prompt_override TEXT,
+    updated_at TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS agent_runs (
+    id TEXT PRIMARY KEY,
+    project_id TEXT NOT NULL,
+    page_slug TEXT NOT NULL DEFAULT '',
+    version INTEGER NOT NULL DEFAULT 1,
+    agent_name TEXT NOT NULL,
+    status TEXT NOT NULL DEFAULT 'running',
+    started_at TEXT NOT NULL,
+    completed_at TEXT,
+    input_tokens INTEGER NOT NULL DEFAULT 0,
+    output_tokens INTEGER NOT NULL DEFAULT 0,
+    cost REAL NOT NULL DEFAULT 0.0,
+    output_summary TEXT DEFAULT '{}'
+);
 """
 
 # Migration: drop old tables if they exist with old schema
@@ -71,6 +94,7 @@ class Database:
         await self._migrate()
         await self._conn.executescript(SCHEMA_SQL)
         await self._conn.commit()
+        await self._seed_agent_configs()
         logger.info("Database connected: %s", self._path)
 
     async def _migrate(self) -> None:
@@ -116,6 +140,26 @@ class Database:
             # No old schema or already migrated — just clean up legacy tables
             await self._conn.executescript(MIGRATION_SQL)
             await self._conn.commit()
+
+    async def _seed_agent_configs(self) -> None:
+        """Insert default agent configs if they don't exist."""
+        from datetime import datetime, timezone
+
+        now = datetime.now(timezone.utc).isoformat()
+        defaults = [
+            ("pm", 1, "", 0.3, None, now),
+            ("designer", 1, "", 0.5, None, now),
+            ("developer", 1, "", 0.2, None, now),
+            ("reviewer", 1, "", 0.1, None, now),
+        ]
+        for row in defaults:
+            await self._conn.execute(
+                """INSERT OR IGNORE INTO agent_configs
+                   (agent_name, enabled, model, temperature, system_prompt_override, updated_at)
+                   VALUES (?, ?, ?, ?, ?, ?)""",
+                row,
+            )
+        await self._conn.commit()
 
     async def close(self) -> None:
         """Close the database connection."""
