@@ -47,6 +47,13 @@ const ALL_AGENTS = {
 
 const DEFAULT_ORDER = ["pm", "designer", "developer", "reviewer"];
 
+function shortModelName(model) {
+  if (!model) return null;
+  // Extract last segment: "openrouter/moonshotai/kimi-k2.5" -> "kimi-k2.5"
+  const parts = model.split("/");
+  return parts[parts.length - 1];
+}
+
 export default function ProgressPipeline({ agents, pipelineAgents }) {
   // Use dynamic agent list if available, otherwise show all 4.
   // Always enforce canonical order since backend may return them in any order.
@@ -88,6 +95,11 @@ export default function ProgressPipeline({ agents, pipelineAgents }) {
                 <Icon size={12} className={isComplete ? "text-green-400" : ""} />
               )}
               {label}
+              {agents[key]?.model && (
+                <span className="text-[10px] opacity-50 font-normal">
+                  {shortModelName(agents[key].model)}
+                </span>
+              )}
               {isRunning && agents[key]?.startedAt && (
                 <ElapsedTimer since={agents[key].startedAt} />
               )}
