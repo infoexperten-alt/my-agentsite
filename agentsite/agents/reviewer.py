@@ -19,4 +19,5 @@ def create_reviewer_agent(model: str) -> Agent:
         name="reviewer",
         description="Reviews generated code for quality and accessibility",
         output_key="review_feedback",
+        options={"max_tokens": 4096},
     )

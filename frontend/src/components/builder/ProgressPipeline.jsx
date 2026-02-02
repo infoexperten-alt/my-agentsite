@@ -6,6 +6,7 @@ import {
   CheckCircle,
   SpinnerGap,
   Check,
+  ArrowCounterClockwise,
 } from "@phosphor-icons/react";
 
 function formatDuration(seconds) {
@@ -70,24 +71,29 @@ export default function ProgressPipeline({ agents, pipelineAgents }) {
         const status = agents[key]?.status;
         const isRunning = status === "running";
         const isComplete = status === "complete";
+        const isRetrying = status === "retrying";
 
         return (
           <div key={key} className="flex items-center gap-2">
             {i > 0 && (
               <div
-                className={`w-6 h-px ${isComplete || isRunning ? "bg-brand-500" : "bg-slate-700"}`}
+                className={`w-6 h-px ${isComplete || isRunning || isRetrying ? "bg-brand-500" : "bg-slate-700"}`}
               />
             )}
             <div
               className={`flex items-center gap-1.5 px-2 py-1 rounded-lg text-xs font-medium transition-all ${
-                isRunning
-                  ? "bg-brand-500/10 border border-brand-500/30 text-brand-400"
-                  : isComplete
-                    ? "bg-slate-800 text-green-400"
-                    : "bg-slate-900 border border-slate-800 text-slate-500"
+                isRetrying
+                  ? "bg-amber-500/10 border border-amber-500/30 text-amber-400"
+                  : isRunning
+                    ? "bg-brand-500/10 border border-brand-500/30 text-brand-400"
+                    : isComplete
+                      ? "bg-slate-800 text-green-400"
+                      : "bg-slate-900 border border-slate-800 text-slate-500"
               }`}
             >
-              {isRunning ? (
+              {isRetrying ? (
+                <ArrowCounterClockwise className="animate-spin" size={12} />
+              ) : isRunning ? (
                 <SpinnerGap className="animate-spin" size={12} />
               ) : isComplete ? (
                 <Check size={12} />
@@ -95,7 +101,10 @@ export default function ProgressPipeline({ agents, pipelineAgents }) {
                 <Icon size={12} className={isComplete ? "text-green-400" : ""} />
               )}
               {label}
-              {agents[key]?.model && (
+              {isRetrying && (
+                <span className="text-[10px] opacity-70">Retrying</span>
+              )}
+              {agents[key]?.model && !isRetrying && (
                 <span className="text-[10px] opacity-50 font-normal">
                   {shortModelName(agents[key].model)}
                 </span>

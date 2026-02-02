@@ -3,8 +3,11 @@
 from __future__ import annotations
 
 import logging
+import os
 from contextlib import asynccontextmanager
 from pathlib import Path
+
+from dotenv import load_dotenv
 
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
@@ -37,6 +40,10 @@ else:
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """Application lifespan: connect DB on startup, close on shutdown."""
+    # Load .env into os.environ so provider API keys are visible everywhere
+    _env_path = Path.cwd() / ".env"
+    if _env_path.exists():
+        load_dotenv(_env_path, override=False)
     settings.ensure_dirs()
     await deps.db.connect()
     deps.project_repo = deps.ProjectRepository(deps.db)

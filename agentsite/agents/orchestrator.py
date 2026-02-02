@@ -63,6 +63,8 @@ def create_pipeline(
         [
             (
                 developer,
+                "You are building the '{page_slug}' page ONLY. "
+                "Ignore other pages in the site plan.\n\n"
                 "Build the website page based on this plan:\n\n"
                 "Site Plan: {site_plan}\n\n"
                 "Style Spec: {style_spec}\n\n"
@@ -116,6 +118,7 @@ def create_dynamic_pipeline(
     max_review_iterations: int | None = None,
     review_threshold: int | None = None,
     agent_configs: dict[str, AgentConfig] | None = None,
+    error_policy: Any = None,
 ) -> SequentialGroup:
     """Build a dynamic pipeline based on PM's required_agents output.
 
@@ -139,14 +142,16 @@ def create_dynamic_pipeline(
     # Designer (optional)
     if "designer" in required_agents:
         designer = create_designer_agent(_agent_model("designer", effective_model, agent_configs))
-        steps.append((
-            designer,
-            "Design a visual style for this website:\n\n"
-            "Site Plan: {site_plan}\n\n"
-            "Logo URL: {logo_url}\n"
-            "Icon URL: {icon_url}\n\n"
-            "Create a cohesive color scheme, typography, and spacing system.",
-        ))
+        steps.append(
+            (
+                designer,
+                "Design a visual style for this website:\n\n"
+                "Site Plan: {site_plan}\n\n"
+                "Logo URL: {logo_url}\n"
+                "Icon URL: {icon_url}\n\n"
+                "Create a cohesive color scheme, typography, and spacing system.",
+            )
+        )
 
     # Developer (always required)
     developer = create_developer_agent(_agent_model("developer", effective_model, agent_configs))
@@ -166,6 +171,8 @@ def create_dynamic_pipeline(
             [
                 (
                     developer,
+                    "You are building the '{page_slug}' page ONLY. "
+                    "Ignore other pages in the site plan.\n\n"
                     "Build the website page based on this plan:\n\n"
                     "Site Plan: {site_plan}\n\n"
                     "Style Spec: {style_spec}\n\n"
@@ -193,18 +200,25 @@ def create_dynamic_pipeline(
         steps.append(build_review_loop)
     else:
         # Developer only, no review loop
-        steps.append((
-            developer,
-            "Build the website page based on this plan:\n\n"
-            "Site Plan: {site_plan}\n\n"
-            "Style Spec: {style_spec}\n\n"
-            "Logo URL: {logo_url}\n"
-            "Icon URL: {icon_url}\n\n"
-            "Use the write_file tool to save each file. Generate complete, "
-            "self-contained HTML with inline or linked CSS/JS.",
-        ))
+        steps.append(
+            (
+                developer,
+                "You are building the '{page_slug}' page ONLY. "
+                "Ignore other pages in the site plan.\n\n"
+                "Build the website page based on this plan:\n\n"
+                "Site Plan: {site_plan}\n\n"
+                "Style Spec: {style_spec}\n\n"
+                "Logo URL: {logo_url}\n"
+                "Icon URL: {icon_url}\n\n"
+                "Use the write_file tool to save each file. Generate complete, "
+                "self-contained HTML with inline or linked CSS/JS.",
+            )
+        )
 
-    return SequentialGroup(steps, callbacks=callbacks)
+    kwargs: dict[str, Any] = {"callbacks": callbacks}
+    if error_policy is not None:
+        kwargs["error_policy"] = error_policy
+    return SequentialGroup(steps, **kwargs)
 
 
 def _agent_model(

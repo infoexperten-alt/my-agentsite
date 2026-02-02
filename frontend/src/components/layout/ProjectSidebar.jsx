@@ -1,5 +1,25 @@
 import { NavLink, useParams } from "react-router-dom";
-import { ArrowLeft, Kanban, PaintBrush, Gear, Sparkle } from "@phosphor-icons/react";
+import {
+  ArrowLeft,
+  Kanban,
+  PaintBrush,
+  List,
+  Gear,
+  Sparkle,
+  Books,
+  MagnifyingGlass,
+  Rocket,
+} from "@phosphor-icons/react";
+
+const projectNav = [
+  { path: "", label: "Overview & Pages", icon: Kanban, end: true },
+  { path: "/brand", label: "Brand", icon: PaintBrush },
+  { path: "/navigation", label: "Navigation", icon: List, soon: true },
+  { path: "/library", label: "Library", icon: Books, soon: true },
+  { path: "/seo", label: "SEO", icon: MagnifyingGlass, soon: true },
+  { path: "/deployments", label: "Deployments", icon: Rocket, soon: true },
+  { path: "/settings", label: "Settings", icon: Gear },
+];
 
 export default function ProjectSidebar() {
   const { projectId } = useParams();
@@ -27,46 +47,28 @@ export default function ProjectSidebar() {
           <p className="px-3 text-xs font-semibold text-slate-500 uppercase tracking-wider mb-2">
             Project Menu
           </p>
-          <NavLink
-            to={`/project/${projectId}`}
-            end
-            className={({ isActive }) =>
-              `flex items-center gap-3 px-3 py-2.5 rounded-lg transition-colors ${
-                isActive
-                  ? "bg-brand-500/10 text-brand-500 border border-brand-500/10"
-                  : "hover:bg-slate-900 hover:text-white"
-              }`
-            }
-          >
-            <Kanban size={20} />
-            <span className="font-medium">Overview & Pages</span>
-          </NavLink>
-          <NavLink
-            to={`/project/${projectId}/settings?tab=brand`}
-            className={({ isActive }) =>
-              `flex items-center gap-3 px-3 py-2.5 rounded-lg transition-colors ${
-                isActive
-                  ? "bg-brand-500/10 text-brand-500 border border-brand-500/10"
-                  : "hover:bg-slate-900 hover:text-white"
-              }`
-            }
-          >
-            <PaintBrush size={20} />
-            <span className="font-medium">Global Styles</span>
-          </NavLink>
-          <NavLink
-            to={`/project/${projectId}/settings?tab=general`}
-            className={({ isActive }) =>
-              `flex items-center gap-3 px-3 py-2.5 rounded-lg transition-colors ${
-                isActive
-                  ? "bg-brand-500/10 text-brand-500 border border-brand-500/10"
-                  : "hover:bg-slate-900 hover:text-white"
-              }`
-            }
-          >
-            <Gear size={20} />
-            <span className="font-medium">Settings</span>
-          </NavLink>
+          {projectNav.map(({ path, label, icon: Icon, end, soon }) => (
+            <NavLink
+              key={path}
+              to={`/project/${projectId}${path}`}
+              end={end}
+              className={({ isActive }) =>
+                `flex items-center gap-3 px-3 py-2.5 rounded-lg transition-colors ${
+                  isActive
+                    ? "bg-brand-500/10 text-brand-500 border border-brand-500/10"
+                    : "hover:bg-slate-900 hover:text-white"
+                }`
+              }
+            >
+              <Icon size={20} />
+              <span className="font-medium flex-1">{label}</span>
+              {soon && (
+                <span className="text-[10px] font-semibold text-slate-500 bg-slate-800 px-1.5 py-0.5 rounded">
+                  SOON
+                </span>
+              )}
+            </NavLink>
+          ))}
         </nav>
       </div>
     </aside>

@@ -19,6 +19,12 @@ export default function ProjectPage() {
   const [newSlug, setNewSlug] = useState("");
   const [creating, setCreating] = useState(false);
 
+  // Rename modal state
+  const [renaming, setRenaming] = useState(null); // page object or null
+  const [renameTitle, setRenameTitle] = useState("");
+  const [renameSlug, setRenameSlug] = useState("");
+  const [renameSaving, setRenameSaving] = useState(false);
+
   const handleCreate = async () => {
     if (!newTitle.trim()) return;
     setCreating(true);
@@ -36,6 +42,56 @@ export default function ProjectPage() {
       setNewSlug("");
     } catch {}
     setCreating(false);
+  };
+
+  const handleDuplicate = async (page) => {
+    const baseSlug = page.slug.replace(/-copy(-\d+)?$/, "");
+    const existingSlugs = new Set(pages.map((p) => p.slug));
+    let slug = `${baseSlug}-copy`;
+    let n = 2;
+    while (existingSlugs.has(slug)) {
+      slug = `${baseSlug}-copy-${n++}`;
+    }
+    await createPage({ title: `${page.title} (Copy)`, slug });
+  };
+
+  const handleRenameOpen = (page) => {
+    setRenaming(page);
+    setRenameTitle(page.title);
+    setRenameSlug(page.slug);
+  };
+
+  const handleRenameSave = async () => {
+    if (!renameTitle.trim() || !renaming) return;
+    setRenameSaving(true);
+    try {
+      // Delete old and create new since there's no update endpoint yet
+      const slug =
+        renameSlug.trim() ||
+        renameTitle
+          .trim()
+          .toLowerCase()
+          .replace(/[^a-z0-9]+/g, "-")
+          .replace(/(^-|-$)/g, "");
+      await removePage(renaming.slug);
+      await createPage({ title: renameTitle.trim(), slug });
+      setRenaming(null);
+    } catch {}
+    setRenameSaving(false);
+  };
+
+  const handleSetHome = async (page) => {
+    // Duplicate the page content to the "home" slug
+    const homeExists = pages.some((p) => p.slug === "home");
+    if (
+      homeExists &&
+      !confirm(
+        `This will replace the current homepage with "${page.title}". Continue?`
+      )
+    )
+      return;
+    if (homeExists) await removePage("home");
+    await createPage({ title: page.title, slug: "home" });
   };
 
   if (loading) {
@@ -105,6 +161,9 @@ export default function ProjectPage() {
                   onDelete={(slug) => {
                     if (confirm("Delete this page?")) removePage(slug);
                   }}
+                  onDuplicate={handleDuplicate}
+                  onRename={handleRenameOpen}
+                  onSetHome={handleSetHome}
                 />
               ))}
               <CreatePageCard onClick={() => setShowCreate(true)} />
@@ -116,7 +175,7 @@ export default function ProjectPage() {
             <BrandIdentityPanel
               project={project}
               onEditBrand={() =>
-                navigate(`/project/${projectId}/settings?tab=brand`)
+                navigate(`/project/${projectId}/brand`)
               }
             />
           </div>
@@ -157,6 +216,43 @@ export default function ProjectPage() {
               className="w-full bg-white text-slate-950 py-2 rounded-lg text-sm font-semibold hover:bg-slate-200 transition-colors disabled:opacity-50"
             >
               {creating ? "Creating..." : "Add Page"}
+            </button>
+          </div>
+        </Modal>
+      )}
+
+      {renaming && (
+        <Modal title="Rename Page" onClose={() => setRenaming(null)}>
+          <div className="space-y-4">
+            <div>
+              <label className="block text-sm font-medium text-slate-300 mb-1">
+                Page Title
+              </label>
+              <input
+                type="text"
+                value={renameTitle}
+                onChange={(e) => setRenameTitle(e.target.value)}
+                className="w-full bg-slate-950 border border-slate-700 text-white text-sm rounded-lg py-2 px-3 focus:border-brand-500 focus:outline-none"
+                autoFocus
+              />
+            </div>
+            <div>
+              <label className="block text-sm font-medium text-slate-300 mb-1">
+                URL Slug
+              </label>
+              <input
+                type="text"
+                value={renameSlug}
+                onChange={(e) => setRenameSlug(e.target.value)}
+                className="w-full bg-slate-950 border border-slate-700 text-white text-sm rounded-lg py-2 px-3 focus:border-brand-500 focus:outline-none font-mono"
+              />
+            </div>
+            <button
+              onClick={handleRenameSave}
+              disabled={!renameTitle.trim() || renameSaving}
+              className="w-full bg-white text-slate-950 py-2 rounded-lg text-sm font-semibold hover:bg-slate-200 transition-colors disabled:opacity-50"
+            >
+              {renameSaving ? "Saving..." : "Save Changes"}
             </button>
           </div>
         </Modal>

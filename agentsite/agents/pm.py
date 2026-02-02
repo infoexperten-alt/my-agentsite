@@ -17,6 +17,7 @@ def create_pm_agent(model: str) -> Agent:
         name="pm",
         description="Plans website structure and pages",
         output_key="site_plan",
+        options={"max_tokens": 4096},
     )
 
 
@@ -38,4 +39,5 @@ def create_pm_agent_plain(model: str) -> Agent:
         name="pm",
         description="Plans website structure and pages (plain text mode)",
         output_key="site_plan",
+        options={"max_tokens": 4096},
     )

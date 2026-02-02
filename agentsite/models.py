@@ -48,17 +48,75 @@ class SitePlan(BaseModel):
 
 
 class StyleSpec(BaseModel):
-    """Output of the Designer Agent — visual design specification."""
+    """Output of the Designer Agent — visual design specification.
 
+    Also serves as the project's full brand / design-system token set.
+    New tokens are optional with sensible defaults so existing data stays valid.
+    """
+
+    # Colors
     primary_color: str = Field(default="#2563eb", description="Primary brand color (hex)")
     secondary_color: str = Field(default="#1e40af", description="Secondary color (hex)")
     accent_color: str = Field(default="#f59e0b", description="Accent color (hex)")
     background_color: str = Field(default="#ffffff", description="Page background (hex)")
+    surface_color: str = Field(default="#f8fafc", description="Surface / card background (hex)")
     text_color: str = Field(default="#1f2937", description="Body text color (hex)")
+    text_secondary_color: str = Field(default="#6b7280", description="Secondary text color (hex)")
+    border_color: str = Field(default="#e5e7eb", description="Default border color (hex)")
+
+    # Typography — families
     font_heading: str = Field(default="Inter", description="Heading font family (Google Fonts)")
     font_body: str = Field(default="Inter", description="Body font family (Google Fonts)")
-    border_radius: str = Field(default="8px", description="Default border radius")
+    font_mono: str = Field(default="JetBrains Mono", description="Monospace font family")
+
+    # Typography — scale
+    font_size_base: str = Field(default="16px", description="Base font size")
+    font_size_sm: str = Field(default="14px", description="Small font size")
+    font_size_lg: str = Field(default="18px", description="Large font size")
+    font_size_xl: str = Field(default="20px", description="XL font size")
+    font_size_2xl: str = Field(default="24px", description="2XL font size")
+    font_size_3xl: str = Field(default="30px", description="3XL font size")
+    font_size_4xl: str = Field(default="36px", description="4XL font size")
+
+    # Typography — rhythm
+    line_height: str = Field(default="1.6", description="Base line height")
+    letter_spacing: str = Field(default="0", description="Base letter spacing")
+    font_weight_normal: str = Field(default="400", description="Normal font weight")
+    font_weight_medium: str = Field(default="500", description="Medium font weight")
+    font_weight_bold: str = Field(default="700", description="Bold font weight")
+
+    # Layout
+    layout_style: str = Field(default="top-nav", description="Navigation layout: top-nav, sidebar, minimal, centered")
+    nav_position: str = Field(default="sticky", description="Nav behavior: sticky, fixed, static")
+    footer_style: str = Field(default="standard", description="Footer style: standard, minimal, none")
+    max_width: str = Field(default="1200px", description="Container max width")
+    container_padding: str = Field(default="1.5rem", description="Container horizontal padding")
+    section_gap: str = Field(default="4rem", description="Vertical gap between page sections")
+
+    # Spacing scale
     spacing_unit: str = Field(default="1rem", description="Base spacing unit")
+    spacing_xs: str = Field(default="0.25rem", description="Extra-small spacing")
+    spacing_sm: str = Field(default="0.5rem", description="Small spacing")
+    spacing_md: str = Field(default="1rem", description="Medium spacing")
+    spacing_lg: str = Field(default="1.5rem", description="Large spacing")
+    spacing_xl: str = Field(default="2rem", description="Extra-large spacing")
+    spacing_2xl: str = Field(default="3rem", description="2XL spacing")
+
+    # Borders
+    border_radius: str = Field(default="8px", description="Default border radius")
+    border_radius_sm: str = Field(default="4px", description="Small border radius")
+    border_radius_lg: str = Field(default="12px", description="Large border radius")
+    border_radius_full: str = Field(default="9999px", description="Full / pill border radius")
+    border_width: str = Field(default="1px", description="Default border width")
+
+    # Shadows
+    shadow_sm: str = Field(default="0 1px 2px rgba(0,0,0,0.05)", description="Small elevation shadow")
+    shadow_md: str = Field(default="0 4px 6px rgba(0,0,0,0.07)", description="Medium elevation shadow")
+    shadow_lg: str = Field(default="0 10px 15px rgba(0,0,0,0.1)", description="Large elevation shadow")
+
+    # Effects
+    transition_speed: str = Field(default="150ms", description="Default transition duration")
+    backdrop_blur: str = Field(default="8px", description="Backdrop blur amount")
 
 
 class GeneratedFile(BaseModel):
@@ -176,6 +234,7 @@ class AgentRun(BaseModel):
     input_tokens: int = Field(default=0)
     output_tokens: int = Field(default=0)
     cost: float = Field(default=0.0)
+    reasoning: str = Field(default="")
     output_summary: dict = Field(default_factory=dict)
 
 
@@ -204,6 +263,8 @@ class ChatMessage(BaseModel):
 class WSEvent(BaseModel):
     """WebSocket event sent to the frontend."""
 
-    type: str = Field(description="Event type: phase_start, phase_complete, agent_start, agent_complete, error, file_written, generation_complete")
+    type: str = Field(
+        description="Event type: phase_start, phase_complete, agent_start, agent_complete, error, file_written, generation_complete"
+    )
     agent: str = Field(default="", description="Agent name")
     data: dict = Field(default_factory=dict, description="Event payload")
