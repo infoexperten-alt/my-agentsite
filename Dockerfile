@@ -19,6 +19,6 @@ RUN cd frontend && npm install
 COPY frontend/ frontend/
 RUN cd frontend && npm run build
 
-EXPOSE 6391
+EXPOSE ${PORT:-6391}
 
-CMD ["agentsite", "serve", "--host", "0.0.0.0", "--port", "6391"]
+CMD ["sh", "-c", "agentsite serve --host 0.0.0.0 --port ${PORT:-6391}"]
