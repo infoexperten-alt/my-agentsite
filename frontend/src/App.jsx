@@ -2,6 +2,8 @@ import { Outlet, useMatch } from "react-router-dom";
 import AppSidebar from "./components/layout/AppSidebar";
 import ProjectSidebar from "./components/layout/ProjectSidebar";
 import TopHeader from "./components/layout/TopHeader";
+import WelcomePopup from "./components/shared/WelcomePopup";
+import SupportPopup from "./components/shared/SupportPopup";
 
 function ProjectLayout() {
   return (
@@ -23,6 +25,8 @@ export default function App() {
     return (
       <div className="h-screen flex overflow-hidden selection:bg-brand-500 selection:text-white">
         <ProjectLayout />
+        <WelcomePopup />
+        <SupportPopup />
       </div>
     );
   }
@@ -34,6 +38,8 @@ export default function App() {
         <TopHeader />
         <Outlet />
       </main>
+      <WelcomePopup />
+      <SupportPopup />
     </div>
   );
 }

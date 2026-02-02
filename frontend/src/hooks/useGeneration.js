@@ -60,6 +60,11 @@ export default function useGeneration(projectId) {
         setGenerating(false);
         if (msg.data?.success === false && msg.data?.error) {
           setError(msg.data.error);
+        } else {
+          // Increment generation counter for support popup
+          const count = parseInt(localStorage.getItem("agentsite_generation_count") || "0", 10) + 1;
+          localStorage.setItem("agentsite_generation_count", String(count));
+          window.dispatchEvent(new Event("agentsite_generation_complete"));
         }
         ws.disconnect();
         versionRefreshRef.current?.();

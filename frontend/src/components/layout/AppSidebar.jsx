@@ -1,5 +1,5 @@
 import { NavLink } from "react-router-dom";
-import { SquaresFour, Users, ChartLineUp, Key, Gear, Sparkle, Brain } from "@phosphor-icons/react";
+import { SquaresFour, Users, ChartLineUp, Key, Gear, Sparkle, Brain, GithubLogo } from "@phosphor-icons/react";
 
 const navItems = [
   { to: "/", icon: SquaresFour, label: "Projects" },
@@ -69,6 +69,18 @@ export default function AppSidebar() {
             </NavLink>
           ))}
         </nav>
+      </div>
+
+      <div className="p-4 border-t border-slate-800/50">
+        <a
+          href="https://github.com/jhd3197/AgentSite"
+          target="_blank"
+          rel="noopener noreferrer"
+          className="flex items-center gap-2.5 px-3 py-2 rounded-lg text-slate-500 hover:text-white hover:bg-slate-900 transition-colors text-sm"
+        >
+          <GithubLogo size={18} />
+          <span className="font-medium">Star on GitHub</span>
+        </a>
       </div>
     </aside>
   );
