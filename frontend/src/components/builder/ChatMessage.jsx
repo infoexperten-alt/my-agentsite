@@ -1,5 +1,6 @@
 import { useState, useEffect } from "react";
-import { Sparkle, WarningCircle, SpinnerGap, CheckCircle, CaretDown, CaretRight, Timer, Lightning, Terminal, Copy, ArrowsOut, X, Export } from "@phosphor-icons/react";
+import { createPortal } from "react-dom";
+import { Sparkle, WarningCircle, SpinnerGap, CheckCircle, CaretDown, CaretRight, Timer, Lightning, Terminal, Copy, ArrowsOut, X, Export, Brain } from "@phosphor-icons/react";
 
 function formatDuration(seconds) {
   if (seconds < 60) return `${Math.round(seconds * 10) / 10}s`;
@@ -36,8 +37,10 @@ function ElapsedTimer({ since }) {
 function AgentRow({ agent: a }) {
   const [showOutput, setShowOutput] = useState(false);
   const [showFullModal, setShowFullModal] = useState(false);
+  const [showReasoning, setShowReasoning] = useState(false);
   const [copied, setCopied] = useState(false);
   const hasOutput = a.status === "complete" && (a.output_preview || a.full_output);
+  const hasReasoning = a.status === "complete" && !!a.reasoning;
   const fullText = a.full_output || a.output_preview || "";
   const hasMore = fullText.length > (a.output_preview || "").length;
 
@@ -107,12 +110,27 @@ function AgentRow({ agent: a }) {
           </div>
         )}
       </div>
+      {hasReasoning && (
+        <button
+          onClick={() => setShowReasoning((s) => !s)}
+          className="flex items-center gap-1.5 mt-1.5 text-[11px] text-indigo-400/70 hover:text-indigo-300 transition-colors cursor-pointer"
+        >
+          <Brain size={12} />
+          <span>Thinking</span>
+          {showReasoning ? <CaretDown size={10} /> : <CaretRight size={10} />}
+        </button>
+      )}
+      {showReasoning && hasReasoning && (
+        <pre className="mt-1 mb-1 text-[11px] text-indigo-300/60 whitespace-pre-wrap font-mono overflow-x-auto max-h-48 overflow-y-auto bg-indigo-950/20 rounded-lg p-2.5 border border-indigo-500/10">
+          {a.reasoning}
+        </pre>
+      )}
       {showOutput && (a.output_preview || a.full_output) && (
         <pre className="mt-1.5 mb-1 text-[11px] text-slate-400 whitespace-pre-wrap font-mono overflow-x-auto max-h-48 overflow-y-auto bg-slate-950 rounded-lg p-2.5 border border-slate-800">
           {a.output_preview || a.full_output}
         </pre>
       )}
-      {showFullModal && (
+      {showFullModal && createPortal(
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm" onClick={() => setShowFullModal(false)}>
           <div className="bg-slate-900 border border-slate-700 rounded-xl shadow-2xl w-[90vw] max-w-3xl max-h-[80vh] flex flex-col" onClick={(e) => e.stopPropagation()}>
             <div className="flex items-center justify-between px-4 py-3 border-b border-slate-800">
@@ -131,7 +149,8 @@ function AgentRow({ agent: a }) {
               {fullText}
             </pre>
           </div>
-        </div>
+        </div>,
+        document.body
       )}
     </div>
   );
@@ -152,6 +171,11 @@ function buildAgentLogs(agents) {
     }
     if (a.tool_calls_count) lines.push(`Tool calls: ${a.tool_calls_count}`);
     if (a.error) lines.push(`Error: ${a.error}`);
+    if (a.reasoning) {
+      lines.push("");
+      lines.push("Reasoning:");
+      lines.push(a.reasoning);
+    }
     const output = a.full_output || a.output_preview;
     if (output) {
       lines.push("");

@@ -17,6 +17,7 @@ def create_designer_agent(model: str) -> Agent:
         name="designer",
         description="Defines visual design system (colors, fonts, spacing)",
         output_key="style_spec",
+        options={"max_tokens": 4096},
     )
 
 
@@ -38,4 +39,5 @@ def create_designer_agent_plain(model: str) -> Agent:
         name="designer",
         description="Defines visual design system (plain text mode)",
         output_key="style_spec",
+        options={"max_tokens": 4096},
     )

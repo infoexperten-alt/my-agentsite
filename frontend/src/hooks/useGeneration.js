@@ -31,6 +31,7 @@ export default function useGeneration(projectId) {
             output_preview: msg.data?.output_preview || "",
             full_output: msg.data?.full_output || "",
             tool_calls_count: msg.data?.tool_calls_count || 0,
+            reasoning: msg.data?.reasoning || "",
           },
         }));
       }),

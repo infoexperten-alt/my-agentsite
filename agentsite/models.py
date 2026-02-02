@@ -176,6 +176,7 @@ class AgentRun(BaseModel):
     input_tokens: int = Field(default=0)
     output_tokens: int = Field(default=0)
     cost: float = Field(default=0.0)
+    reasoning: str = Field(default="")
     output_summary: dict = Field(default_factory=dict)
 
 
@@ -204,6 +205,8 @@ class ChatMessage(BaseModel):
 class WSEvent(BaseModel):
     """WebSocket event sent to the frontend."""
 
-    type: str = Field(description="Event type: phase_start, phase_complete, agent_start, agent_complete, error, file_written, generation_complete")
+    type: str = Field(
+        description="Event type: phase_start, phase_complete, agent_start, agent_complete, error, file_written, generation_complete"
+    )
     agent: str = Field(default="", description="Agent name")
     data: dict = Field(default_factory=dict, description="Event payload")

@@ -17,11 +17,13 @@ from ..config import settings
 from ..models import AgentConfig, AgentRun, PageOutput, Project, SitePlan, StyleSpec, WSEvent
 from .gemini_patch import apply_gemini_patch
 from .project_manager import ProjectManager
+from .reasoning_patch import apply_reasoning_patch
 
 logger = logging.getLogger("agentsite.pipeline")
 
-# Apply Gemini tool result format fix at import time
+# Apply patches at import time
 apply_gemini_patch()
+apply_reasoning_patch()
 
 
 def _agent_name_to_key(name: str) -> str:
@@ -210,6 +212,30 @@ class GenerationPipeline:
                             ", ".join(f"{k}=...({len(str(v))})" for k, v in (tc.get("arguments") or {}).items()),
                         )
 
+            # Extract reasoning/thinking from assistant messages.
+            # The reasoning_patch ensures reasoning_content is present on
+            # assistant messages for all code paths (not just native tool use).
+            reasoning_text = ""
+            result_messages = getattr(result, "messages", []) or []
+            for msg in result_messages:
+                if isinstance(msg, dict) and msg.get("role") == "assistant" and msg.get("reasoning_content"):
+                    reasoning_text = msg["reasoning_content"]
+
+            # When a reasoning model returns empty content (e.g. Kimi K2.5),
+            # the driver uses reasoning_content as the text response.  Detect
+            # this so we don't show reasoning twice (once as output, once as
+            # thinking) and so the pipeline knows the real output was empty.
+            if reasoning_text and output_text and output_text.strip() == reasoning_text.strip():
+                logger.info(
+                    "Agent %s output equals reasoning (%d chars) — actual content was empty",
+                    agent_key,
+                    len(reasoning_text),
+                )
+                output_text = ""
+
+            if agent_key == "developer" and reasoning_text:
+                self._developer_reasoning = reasoning_text
+
             agent_model = self._agent_models.get(agent_key, "")
             self._emit(
                 "agent_complete",
@@ -222,6 +248,7 @@ class GenerationPipeline:
                     "output_tokens": output_tokens,
                     "tool_calls_count": len(tool_calls),
                     "model": agent_model,
+                    "reasoning": reasoning_text,
                 },
             )
 

@@ -150,6 +150,7 @@ export default function PageBuilderPage() {
         full_output: agentData.full_output || "",
         tool_calls_count: agentData.tool_calls_count || 0,
         model: agentData.model || "",
+        reasoning: agentData.reasoning || "",
       };
     });
 

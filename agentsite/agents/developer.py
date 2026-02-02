@@ -24,6 +24,7 @@ def create_developer_agent(model: str) -> Agent:
         name="developer",
         description="Generates HTML/CSS/JS files for each page",
         output_key="page_output",
+        options={"max_tokens": 16384, "timeout": 900},
     )
 
 
@@ -65,4 +66,5 @@ def create_developer_agent_plain(model: str) -> Agent:
         name="developer",
         description="Generates HTML/CSS/JS files for each page (plain text mode)",
         output_key="page_output",
+        options={"max_tokens": 16384, "timeout": 900},
     )

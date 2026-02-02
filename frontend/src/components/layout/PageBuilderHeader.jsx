@@ -36,12 +36,9 @@ export default function PageBuilderHeader({
           <ArrowLeft size={14} /> Back
         </button>
         <div className="h-4 w-px bg-slate-800" />
-        <div className="flex items-center gap-2 min-w-0">
-          <span className="font-semibold text-white truncate">
-            {page?.title || "..."}
-          </span>
-          <span className="text-slate-600 text-xs shrink-0">/{page?.slug}</span>
-        </div>
+        <span className="font-semibold text-white truncate">
+          {page?.title || "..."}
+        </span>
       </div>
 
       <DeviceSwitcher active={device} onChange={onDeviceChange} />

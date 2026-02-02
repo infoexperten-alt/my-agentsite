@@ -1,5 +1,16 @@
+import { useState, useRef, useEffect, useCallback } from "react";
+import { createPortal } from "react-dom";
 import { useNavigate, useParams } from "react-router-dom";
-import { DotsThreeVertical, Robot, Spinner as SpinnerIcon } from "@phosphor-icons/react";
+import {
+  DotsThreeVertical,
+  Robot,
+  Spinner as SpinnerIcon,
+  PencilSimple,
+  Copy,
+  ArrowSquareOut,
+  Trash,
+  House,
+} from "@phosphor-icons/react";
 import Badge from "../shared/Badge";
 
 function PagePreview() {
@@ -21,10 +32,47 @@ function PagePreview() {
   );
 }
 
-export default function PageCard({ page, status = "draft", onDelete }) {
+export default function PageCard({
+  page,
+  status = "draft",
+  onDelete,
+  onDuplicate,
+  onRename,
+  onSetHome,
+}) {
   const navigate = useNavigate();
   const { projectId } = useParams();
   const isGenerating = status === "generating";
+  const [menuOpen, setMenuOpen] = useState(false);
+  const [menuPos, setMenuPos] = useState({ top: 0, left: 0 });
+  const btnRef = useRef(null);
+  const menuRef = useRef(null);
+
+  const updateMenuPos = useCallback(() => {
+    if (!btnRef.current) return;
+    const rect = btnRef.current.getBoundingClientRect();
+    setMenuPos({
+      top: rect.bottom + 4,
+      left: rect.right - 192, // 192 = w-48 (12rem)
+    });
+  }, []);
+
+  useEffect(() => {
+    if (!menuOpen) return;
+    const handleClickOutside = (e) => {
+      if (btnRef.current && btnRef.current.contains(e.target)) return;
+      if (menuRef.current && menuRef.current.contains(e.target)) return;
+      setMenuOpen(false);
+    };
+    document.addEventListener("mousedown", handleClickOutside);
+    window.addEventListener("scroll", () => setMenuOpen(false), true);
+    window.addEventListener("resize", () => setMenuOpen(false));
+    return () => {
+      document.removeEventListener("mousedown", handleClickOutside);
+      window.removeEventListener("scroll", () => setMenuOpen(false), true);
+      window.removeEventListener("resize", () => setMenuOpen(false));
+    };
+  }, [menuOpen]);
 
   if (isGenerating) {
     return (
@@ -54,6 +102,37 @@ export default function PageCard({ page, status = "draft", onDelete }) {
     );
   }
 
+  const menuItems = [
+    {
+      label: "Open Builder",
+      icon: ArrowSquareOut,
+      onClick: () => navigate(`/project/${projectId}/page/${page.slug}`),
+    },
+    {
+      label: "Rename",
+      icon: PencilSimple,
+      onClick: () => onRename?.(page),
+    },
+    {
+      label: "Duplicate",
+      icon: Copy,
+      onClick: () => onDuplicate?.(page),
+    },
+    {
+      label: "Set as Homepage",
+      icon: House,
+      onClick: () => onSetHome?.(page),
+      hidden: page.slug === "home",
+    },
+    { type: "divider" },
+    {
+      label: "Delete",
+      icon: Trash,
+      onClick: () => onDelete?.(page.slug),
+      danger: true,
+    },
+  ];
+
   return (
     <div
       className="group bg-slate-900 border border-slate-800 rounded-xl overflow-hidden hover:border-slate-600 transition-all hover:shadow-lg flex flex-col cursor-pointer"
@@ -73,15 +152,15 @@ export default function PageCard({ page, status = "draft", onDelete }) {
       <div className="p-4 bg-slate-900">
         <div className="flex justify-between items-start">
           <div>
-            <h3 className="text-white font-medium flex items-center gap-2">
-              {page.title}
-            </h3>
+            <h3 className="text-white font-medium">{page.title}</h3>
             <p className="text-xs text-slate-500 font-mono mt-1">/{page.slug}</p>
           </div>
           <button
+            ref={btnRef}
             onClick={(e) => {
               e.stopPropagation();
-              onDelete?.(page.slug);
+              updateMenuPos();
+              setMenuOpen((v) => !v);
             }}
             className="text-slate-500 hover:text-white p-1 rounded hover:bg-slate-800"
           >
@@ -89,6 +168,40 @@ export default function PageCard({ page, status = "draft", onDelete }) {
           </button>
         </div>
       </div>
+      {menuOpen &&
+        createPortal(
+          <div
+            ref={menuRef}
+            className="fixed w-48 bg-slate-900 border border-slate-700 rounded-lg shadow-xl z-[9999] py-1"
+            style={{ top: menuPos.top, left: menuPos.left }}
+          >
+            {menuItems
+              .filter((item) => !item.hidden)
+              .map((item, i) =>
+                item.type === "divider" ? (
+                  <div key={i} className="border-t border-slate-800 my-1" />
+                ) : (
+                  <button
+                    key={item.label}
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      setMenuOpen(false);
+                      item.onClick();
+                    }}
+                    className={`w-full flex items-center gap-2.5 px-3 py-2 text-sm transition-colors ${
+                      item.danger
+                        ? "text-red-400 hover:bg-red-500/10"
+                        : "text-slate-300 hover:bg-slate-800 hover:text-white"
+                    }`}
+                  >
+                    <item.icon size={15} />
+                    {item.label}
+                  </button>
+                )
+              )}
+          </div>,
+          document.body
+        )}
     </div>
   );
 }
