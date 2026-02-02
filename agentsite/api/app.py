@@ -52,6 +52,13 @@ async def lifespan(app: FastAPI):
     deps.agent_config_repo = deps.AgentConfigRepository(deps.db)
     deps.agent_run_repo = deps.AgentRunRepository(deps.db)
     deps.message_repo = deps.MessageRepository(deps.db)
+    # Backfill costs for runs recorded before cost tracking was added
+    try:
+        updated = await deps.agent_run_repo.backfill_costs()
+        if updated:
+            logger.info("Backfilled costs for %d agent runs", updated)
+    except Exception:
+        logger.debug("Cost backfill skipped", exc_info=True)
     logger.info("AgentSite started — data dir: %s", settings.data_dir)
     yield
     await deps.db.close()

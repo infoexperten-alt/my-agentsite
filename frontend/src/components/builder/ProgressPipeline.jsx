@@ -48,6 +48,13 @@ const ALL_AGENTS = {
 
 const DEFAULT_ORDER = ["pm", "designer", "developer", "reviewer"];
 
+function formatCost(cost) {
+  if (!cost || cost === 0) return null;
+  if (cost < 0.001) return `$${cost.toFixed(6)}`;
+  if (cost < 0.01) return `$${cost.toFixed(4)}`;
+  return `$${cost.toFixed(3)}`;
+}
+
 function shortModelName(model) {
   if (!model) return null;
   // Extract last segment: "openrouter/moonshotai/kimi-k2.5" -> "kimi-k2.5"
@@ -115,9 +122,12 @@ export default function ProgressPipeline({ agents, pipelineAgents }) {
               {isComplete && agents[key]?.duration_s != null && (
                 <span
                   className="text-[10px] tabular-nums opacity-70"
-                  title={`${agents[key].input_tokens || 0} in / ${agents[key].output_tokens || 0} out tokens`}
+                  title={`${agents[key].input_tokens || 0} in / ${agents[key].output_tokens || 0} out tokens${agents[key].cost ? ` · ${formatCost(agents[key].cost)}` : ""}`}
                 >
                   {formatDuration(agents[key].duration_s)}
+                  {formatCost(agents[key]?.cost) && (
+                    <span className="ml-1 text-emerald-400/70">{formatCost(agents[key].cost)}</span>
+                  )}
                 </span>
               )}
             </div>

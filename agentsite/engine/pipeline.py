@@ -193,6 +193,11 @@ class GenerationPipeline:
                     )
                     run.input_tokens = input_tokens
                     run.output_tokens = output_tokens
+                    run.cost = float(
+                        usage.get("total_cost", 0.0)
+                        or usage.get("cost", 0.0)
+                        or 0.0
+                    )
 
             # Capture developer output directly for fallback extraction
             if agent_key == "developer":
@@ -237,6 +242,7 @@ class GenerationPipeline:
                 self._developer_reasoning = reasoning_text
 
             agent_model = self._agent_models.get(agent_key, "")
+            agent_cost = run.cost if run else 0.0
             self._emit(
                 "agent_complete",
                 agent=agent_key,
@@ -246,6 +252,7 @@ class GenerationPipeline:
                     "duration_s": duration_s,
                     "input_tokens": input_tokens,
                     "output_tokens": output_tokens,
+                    "cost": agent_cost,
                     "tool_calls_count": len(tool_calls),
                     "model": agent_model,
                     "reasoning": reasoning_text,

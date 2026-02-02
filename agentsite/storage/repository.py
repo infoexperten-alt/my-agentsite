@@ -505,13 +505,14 @@ class AgentRunRepository:
         }
 
     async def get_daily_stats(self, days: int = 30) -> list[dict]:
-        """Get daily token aggregates for the last N days."""
+        """Get daily token and cost aggregates for the last N days."""
         cursor = await self._db.conn.execute(
             """
             SELECT
                 DATE(started_at) as date,
                 SUM(input_tokens) as input_tokens,
-                SUM(output_tokens) as output_tokens
+                SUM(output_tokens) as output_tokens,
+                SUM(cost) as cost
             FROM agent_runs
             WHERE started_at >= DATE('now', ?)
             GROUP BY DATE(started_at)
@@ -525,9 +526,46 @@ class AgentRunRepository:
                 "date": row["date"],
                 "input_tokens": row["input_tokens"] or 0,
                 "output_tokens": row["output_tokens"] or 0,
+                "cost": round(row["cost"] or 0.0, 4),
             }
             for row in rows
         ]
+
+    async def backfill_costs(self) -> int:
+        """Recalculate costs for runs with tokens but zero cost."""
+        cursor = await self._db.conn.execute(
+            """SELECT ar.id, ar.input_tokens, ar.output_tokens, p.model
+               FROM agent_runs ar
+               JOIN projects p ON ar.project_id = p.id
+               WHERE ar.cost = 0.0 AND (ar.input_tokens > 0 OR ar.output_tokens > 0)"""
+        )
+        rows = await cursor.fetchall()
+        if not rows:
+            return 0
+
+        try:
+            from prompture.drivers import get_driver_for_model
+
+            updated = 0
+            for row in rows:
+                model_str = row["model"] or ""
+                provider = model_str.split("/")[0] if "/" in model_str else ""
+                model_id = model_str.split("/", 1)[1] if "/" in model_str else model_str
+                try:
+                    drv = get_driver_for_model(model_str)
+                    cost = drv._calculate_cost(provider, model_id, row["input_tokens"], row["output_tokens"])
+                except Exception:
+                    cost = 0.0
+                if cost > 0:
+                    await self._db.conn.execute(
+                        "UPDATE agent_runs SET cost = ? WHERE id = ?",
+                        (round(cost, 6), row["id"]),
+                    )
+                    updated += 1
+            await self._db.conn.commit()
+            return updated
+        except ImportError:
+            return 0
 
     @staticmethod
     def _row_to_run(row: Any) -> AgentRun:

@@ -2,11 +2,15 @@
 
 from __future__ import annotations
 
+import logging
+
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 
 from ...models import AgentConfig
 from ..deps import get_agent_config_repo, get_agent_run_repo
+
+logger = logging.getLogger("agentsite.api.agents")
 
 router = APIRouter(prefix="/api/agents", tags=["agents"])
 
@@ -75,3 +79,14 @@ async def get_daily_stats(
 ):
     """Get daily token aggregates for the last N days."""
     return await repo.get_daily_stats(days=days)
+
+
+@router.post("/runs/backfill-costs")
+async def backfill_costs(repo=Depends(get_agent_run_repo)):
+    """Recalculate costs for existing runs that have tokens but zero cost.
+
+    Uses Prompture's pricing engine to compute costs from stored token counts
+    and the project's model.
+    """
+    updated = await repo.backfill_costs()
+    return {"updated": updated}

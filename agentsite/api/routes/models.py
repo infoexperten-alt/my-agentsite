@@ -29,6 +29,12 @@ async def list_models():
         logger.warning("Model discovery failed: %s", exc)
         enriched = []
 
+    # Try to import pricing helper
+    try:
+        from prompture.model_rates import get_model_rates
+    except ImportError:
+        get_model_rates = None
+
     # Group by provider
     groups: dict[str, list[dict]] = {}
     for entry in enriched:
@@ -38,6 +44,20 @@ async def list_models():
         # service to route to (e.g. openrouter/moonshotai/kimi-k2.5).
         model_id = f"{provider}/{raw_id}" if not raw_id.startswith(f"{provider}/") else raw_id
         caps = entry.get("capabilities") or {}
+
+        # Fetch pricing from models.dev cache (per 1M tokens)
+        pricing = None
+        if get_model_rates is not None:
+            try:
+                rates = get_model_rates(provider, raw_id)
+                if rates:
+                    pricing = {
+                        "input": rates.get("input"),
+                        "output": rates.get("output"),
+                    }
+            except Exception:
+                pass
+
         groups.setdefault(provider, []).append(
             {
                 "id": model_id,
@@ -50,6 +70,7 @@ async def list_models():
                     "supports_structured_output", False
                 ),
                 "is_reasoning": caps.get("is_reasoning", False),
+                "pricing": pricing,
             }
         )
 
