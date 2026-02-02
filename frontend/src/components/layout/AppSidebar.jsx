@@ -1,5 +1,5 @@
 import { NavLink } from "react-router-dom";
-import { SquaresFour, Users, ChartLineUp, Key, Gear, Sparkle } from "@phosphor-icons/react";
+import { SquaresFour, Users, ChartLineUp, Key, Gear, Sparkle, Brain } from "@phosphor-icons/react";
 
 const navItems = [
   { to: "/", icon: SquaresFour, label: "Projects" },
@@ -9,6 +9,7 @@ const navItems = [
 
 const settingsItems = [
   { to: "/settings/api-keys", icon: Key, label: "API Keys" },
+  { to: "/settings/models", icon: Brain, label: "Models" },
   { to: "/settings", icon: Gear, label: "General" },
 ];
 

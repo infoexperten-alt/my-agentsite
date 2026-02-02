@@ -17,9 +17,9 @@ function ProjectLayout() {
 
 export default function App() {
   const projectMatch = useMatch("/project/:projectId");
-  const settingsMatch = useMatch("/project/:projectId/settings");
+  const projectSubMatch = useMatch("/project/:projectId/*");
 
-  if (projectMatch || settingsMatch) {
+  if (projectMatch || projectSubMatch) {
     return (
       <div className="h-screen flex overflow-hidden selection:bg-brand-500 selection:text-white">
         <ProjectLayout />

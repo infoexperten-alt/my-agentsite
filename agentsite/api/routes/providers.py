@@ -20,6 +20,14 @@ PROVIDERS = {
     "groq": {"env_key": "GROQ_API_KEY", "type": "api_key"},
     "grok": {"env_key": "GROK_API_KEY", "type": "api_key"},
     "openrouter": {"env_key": "OPENROUTER_API_KEY", "type": "api_key"},
+    "moonshot": {"env_key": "MOONSHOT_API_KEY", "type": "api_key"},
+    "zai": {"env_key": "ZHIPU_API_KEY", "type": "api_key"},
+    "modelscope": {"env_key": "MODELSCOPE_API_KEY", "type": "api_key"},
+    "azure": {
+        "env_key": "AZURE_API_KEY",
+        "type": "api_key",
+        "extra_keys": ["AZURE_API_ENDPOINT", "AZURE_DEPLOYMENT_ID"],
+    },
     "ollama": {
         "env_key": "OLLAMA_ENDPOINT",
         "type": "endpoint",
@@ -29,6 +37,11 @@ PROVIDERS = {
         "env_key": "LMSTUDIO_ENDPOINT",
         "type": "endpoint",
         "default": "http://127.0.0.1:1234/v1/chat/completions",
+    },
+    "local_http": {
+        "env_key": "LOCAL_HTTP_ENDPOINT",
+        "type": "endpoint",
+        "default": "http://localhost:8000/generate",
     },
 }
 
@@ -84,11 +97,30 @@ def _remove_env_value(key: str) -> None:
 
 @router.get("")
 async def list_providers():
-    """Return all known providers with configuration status."""
+    """Return all known providers with configuration status.
+
+    Checks both os.environ and the .env file so that keys added before
+    the server started are correctly shown as configured.
+    """
+    # Parse .env once so we can detect keys not yet in os.environ
+    env_file_values: dict[str, str] = {}
+    content = _read_env_file()
+    for line in content.splitlines():
+        line = line.strip()
+        if not line or line.startswith("#"):
+            continue
+        if "=" in line:
+            k, _, v = line.partition("=")
+            env_file_values[k.strip()] = v.strip()
+
     result = []
     for name, info in PROVIDERS.items():
         env_key = info["env_key"]
-        value = os.environ.get(env_key, "")
+        # Prefer os.environ, fall back to .env file value
+        value = os.environ.get(env_key, "") or env_file_values.get(env_key, "")
+        # If found in .env but missing from os.environ, inject it
+        if value and not os.environ.get(env_key):
+            os.environ[env_key] = value
         configured = bool(value)
         masked = _mask_value(value, info["type"]) if configured else ""
         result.append(

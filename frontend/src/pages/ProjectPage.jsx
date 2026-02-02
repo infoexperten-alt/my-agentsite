@@ -175,7 +175,7 @@ export default function ProjectPage() {
             <BrandIdentityPanel
               project={project}
               onEditBrand={() =>
-                navigate(`/project/${projectId}/settings?tab=brand`)
+                navigate(`/project/${projectId}/brand`)
               }
             />
           </div>
