@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import os
 from pathlib import Path
 
 from pydantic_settings import BaseSettings
@@ -19,9 +18,9 @@ class Settings(BaseSettings):
     # Data directory for projects and database
     data_dir: Path = Path.home() / ".agentsite"
 
-    # Server — also respect the plain PORT env var (used by Railway, Render, etc.)
-    host: str = "0.0.0.0"
-    port: int = int(os.environ.get("PORT", 6391))
+    # Server
+    host: str = "127.0.0.1"
+    port: int = 6391
 
     # Agent pipeline
     max_review_iterations: int = 2

@@ -19,6 +19,7 @@ RUN cd frontend && npm install
 COPY frontend/ frontend/
 RUN cd frontend && npm run build
 
-EXPOSE ${PORT:-6391}
+EXPOSE 6391
 
-CMD ["sh", "-c", "agentsite serve --host 0.0.0.0 --port ${PORT:-6391}"]
+# Default port 6391 for local/docker-compose; Railway overrides via PORT env var
+CMD ["sh", "-c", "exec agentsite serve --host 0.0.0.0 --port ${PORT:-6391}"]
