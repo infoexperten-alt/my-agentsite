@@ -76,6 +76,11 @@ def create_app() -> FastAPI:
         allow_headers=["*"],
     )
 
+    # Lightweight health check (no external calls)
+    @app.get("/api/health")
+    async def health():
+        return {"status": "ok"}
+
     # API routes
     app.include_router(projects.router)
     app.include_router(generate.router)
