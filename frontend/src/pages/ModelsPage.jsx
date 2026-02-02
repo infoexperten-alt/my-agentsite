@@ -35,6 +35,13 @@ function formatNumber(n) {
   return n.toString();
 }
 
+function formatPrice(rate) {
+  if (rate == null) return "—";
+  if (rate === 0) return "free";
+  if (rate >= 1) return `$${rate.toFixed(2)}`;
+  return `$${rate.toFixed(4)}`.replace(/0+$/, "");
+}
+
 function CapBadge({ icon: Icon, label, active }) {
   if (!active) return null;
   return (
@@ -255,6 +262,26 @@ export default function ModelsPage() {
                               <p className="text-xs text-slate-400 font-mono">
                                 {formatNumber(m.max_output_tokens)}
                               </p>
+                            </div>
+
+                            {/* Pricing per 1M tokens */}
+                            <div className="hidden xl:block text-right shrink-0 w-28">
+                              <p className="text-[10px] text-slate-600">
+                                Price / 1M tok
+                              </p>
+                              {m.pricing ? (
+                                <p className="text-xs text-slate-400 font-mono">
+                                  <span className="text-emerald-400">
+                                    {formatPrice(m.pricing.input)}
+                                  </span>
+                                  <span className="text-slate-600 mx-0.5">/</span>
+                                  <span className="text-amber-400">
+                                    {formatPrice(m.pricing.output)}
+                                  </span>
+                                </p>
+                              ) : (
+                                <p className="text-xs text-slate-600">—</p>
+                              )}
                             </div>
 
                             {/* Set as default */}

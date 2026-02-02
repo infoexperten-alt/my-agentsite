@@ -1,6 +1,6 @@
 """Patch Prompture Conversation to preserve reasoning on assistant messages.
 
-Prompture 0.0.47 stores ``reasoning_content`` on assistant messages only in
+Prompture 0.0.49 stores ``reasoning_content`` on assistant messages only in
 the native tool-calling path.  For the simple ``ask()`` and ``ask_for_json()``
 paths, reasoning is stored on ``Conversation.last_reasoning`` but **not** on
 the message dicts in the history.

@@ -47,8 +47,8 @@ class TestModelsEndpoint:
         resp = await client.get("/api/models")
         assert resp.status_code == 200
         data = resp.json()
-        assert "models" in data
-        assert isinstance(data["models"], list)
+        assert "groups" in data
+        assert isinstance(data["groups"], dict)
 
 
 class TestProjectEndpoints:
