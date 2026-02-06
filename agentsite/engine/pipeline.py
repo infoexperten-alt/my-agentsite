@@ -194,8 +194,8 @@ class GenerationPipeline:
                     run.input_tokens = input_tokens
                     run.output_tokens = output_tokens
                     run.cost = float(
-                        usage.get("total_cost", 0.0)
-                        or usage.get("cost", 0.0)
+                        usage.get("cost", 0.0)
+                        or usage.get("total_cost", 0.0)  # backwards compat
                         or 0.0
                     )
 
