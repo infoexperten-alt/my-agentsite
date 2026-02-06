@@ -194,8 +194,8 @@ class GenerationPipeline:
                     run.input_tokens = input_tokens
                     run.output_tokens = output_tokens
                     run.cost = float(
-                        usage.get("total_cost", 0.0)
-                        or usage.get("cost", 0.0)
+                        usage.get("cost", 0.0)
+                        or usage.get("total_cost", 0.0)  # backwards compat
                         or 0.0
                     )
 
@@ -293,14 +293,15 @@ class GenerationPipeline:
 
         try:
             # --- Resolve model for each agent and store for WS events ---
-            from ..agents.pm import create_pm_agent
+            from ..agents.pm import create_pm_agent_auto
 
             for agent_key in ("pm", "designer", "developer", "reviewer"):
                 self._agent_models[agent_key] = _agent_model(agent_key, model, self._agent_configs)
 
             # --- Phase A: Run PM agent standalone to get SitePlan ---
             pm_model = self._agent_models["pm"]
-            pm_agent = create_pm_agent(pm_model)
+            # Use auto factory to select structured/plain mode based on capabilities
+            pm_agent = create_pm_agent_auto(pm_model)
 
             pm_callbacks = GroupCallbacks(
                 on_agent_start=_on_agent_start,
@@ -315,26 +316,8 @@ class GenerationPipeline:
             )
             _patch_pipeline_deps(pm_pipeline, deps)
 
-            try:
-                pm_result = pm_pipeline.run(page_prompt)
-                site_plan_text = pm_result.shared_state.get("site_plan", "")
-            except Exception as pm_exc:
-                logger.warning(
-                    "PM agent failed with structured output, retrying in plain text mode: %s",
-                    pm_exc,
-                )
-                from ..agents.pm import create_pm_agent_plain
-
-                pm_agent_plain = create_pm_agent_plain(pm_model)
-                pm_pipeline_plain = SequentialGroup(
-                    [(pm_agent_plain, "{prompt}")],
-                    callbacks=pm_callbacks,
-                    state={"prompt": page_prompt},
-                    error_policy=ErrorPolicy.raise_on_error,
-                )
-                _patch_pipeline_deps(pm_pipeline_plain, deps)
-                pm_result = pm_pipeline_plain.run(page_prompt)
-                site_plan_text = pm_result.shared_state.get("site_plan", "")
+            pm_result = pm_pipeline.run(page_prompt)
+            site_plan_text = pm_result.shared_state.get("site_plan", "")
 
             # Parse required_agents from the PM output
             required_agents = ["designer", "developer", "reviewer"]  # default
@@ -368,12 +351,11 @@ class GenerationPipeline:
             }
 
             if "designer" in required_agents:
-                from prompture import clean_json_text
-
-                from ..agents.designer import create_designer_agent, create_designer_agent_plain
+                from ..agents.designer import create_designer_agent_auto
 
                 designer_model = self._agent_models["designer"]
-                designer_agent = create_designer_agent(designer_model)
+                # Use auto factory to select structured/plain mode based on capabilities
+                designer_agent = create_designer_agent_auto(designer_model)
                 designer_prompt = (
                     "Design a visual style for this website:\n\n"
                     f"Site Plan: {site_plan_text}\n\n"
@@ -396,24 +378,8 @@ class GenerationPipeline:
                 )
                 _patch_pipeline_deps(designer_pipeline, deps)
 
-                try:
-                    designer_result = designer_pipeline.run(designer_prompt)
-                    style_spec_text = designer_result.shared_state.get("style_spec", "")
-                except Exception as designer_exc:
-                    logger.warning(
-                        "Designer agent failed with structured output, retrying in plain text mode: %s",
-                        designer_exc,
-                    )
-                    designer_agent_plain = create_designer_agent_plain(designer_model)
-                    designer_pipeline_plain = SequentialGroup(
-                        [(designer_agent_plain, "{designer_prompt}")],
-                        callbacks=designer_callbacks,
-                        state={"designer_prompt": designer_prompt},
-                        error_policy=ErrorPolicy.raise_on_error,
-                    )
-                    _patch_pipeline_deps(designer_pipeline_plain, deps)
-                    designer_result = designer_pipeline_plain.run(designer_prompt)
-                    style_spec_text = designer_result.shared_state.get("style_spec", "")
+                designer_result = designer_pipeline.run(designer_prompt)
+                style_spec_text = designer_result.shared_state.get("style_spec", "")
 
                 initial_state["style_spec"] = style_spec_text
 

@@ -4,8 +4,20 @@ from __future__ import annotations
 
 from prompture import Agent
 
+from ..engine.capabilities import supports_structured_output
 from ..models import StyleSpec
 from .personas import DESIGNER_PERSONA
+
+
+def create_designer_agent_auto(model: str) -> Agent:
+    """Create the Designer agent, automatically selecting structured or plain mode.
+
+    Uses capability detection to choose the right variant upfront,
+    avoiding runtime fallbacks.
+    """
+    if supports_structured_output(model):
+        return create_designer_agent(model)
+    return create_designer_agent_plain(model)
 
 
 def create_designer_agent(model: str) -> Agent:

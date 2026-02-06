@@ -119,7 +119,7 @@ def generate(prompt: str, model: str | None, output: str | None, name: str | Non
         usage = result.aggregate_usage
         if usage:
             tokens = usage.get("total_tokens", 0)
-            cost = usage.get("total_cost", 0.0)
+            cost = usage.get("cost", 0.0) or usage.get("total_cost", 0.0)
             click.echo(f"\nUsage: {tokens:,} tokens, ${cost:.4f}")
 
     except Exception as exc:
