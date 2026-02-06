@@ -4,8 +4,20 @@ from __future__ import annotations
 
 from prompture import Agent
 
+from ..engine.capabilities import supports_tools
 from .personas import DEVELOPER_PERSONA
 from .tools import list_files, read_file, write_file
+
+
+def create_developer_agent_auto(model: str) -> Agent:
+    """Create the Developer agent, automatically selecting tools or plain mode.
+
+    Uses capability detection to choose the right variant upfront,
+    avoiding runtime fallbacks.
+    """
+    if supports_tools(model):
+        return create_developer_agent(model)
+    return create_developer_agent_plain(model)
 
 
 def create_developer_agent(model: str) -> Agent:

@@ -4,8 +4,20 @@ from __future__ import annotations
 
 from prompture import Agent
 
+from ..engine.capabilities import supports_structured_output
 from ..models import SitePlan
 from .personas import PM_PERSONA
+
+
+def create_pm_agent_auto(model: str) -> Agent:
+    """Create the PM agent, automatically selecting structured or plain mode.
+
+    Uses capability detection to choose the right variant upfront,
+    avoiding runtime fallbacks.
+    """
+    if supports_structured_output(model):
+        return create_pm_agent(model)
+    return create_pm_agent_plain(model)
 
 
 def create_pm_agent(model: str) -> Agent:

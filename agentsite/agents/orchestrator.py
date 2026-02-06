@@ -8,10 +8,10 @@ from prompture import GroupCallbacks, LoopGroup, SequentialGroup
 
 from ..config import settings
 from ..models import AgentConfig
-from .designer import create_designer_agent
-from .developer import create_developer_agent
-from .pm import create_pm_agent
-from .reviewer import create_reviewer_agent
+from .designer import create_designer_agent_auto
+from .developer import create_developer_agent_auto
+from .pm import create_pm_agent_auto
+from .reviewer import create_reviewer_agent_auto
 
 
 def create_pipeline(
@@ -46,10 +46,11 @@ def create_pipeline(
     max_iters = max_review_iterations or settings.max_review_iterations
     threshold = review_threshold or settings.review_approval_threshold
 
-    pm = create_pm_agent(_agent_model("pm", effective_model, agent_configs))
-    designer = create_designer_agent(_agent_model("designer", effective_model, agent_configs))
-    developer = create_developer_agent(_agent_model("developer", effective_model, agent_configs))
-    reviewer = create_reviewer_agent(_agent_model("reviewer", effective_model, agent_configs))
+    # Use auto factories to select the right agent variant based on model capabilities
+    pm = create_pm_agent_auto(_agent_model("pm", effective_model, agent_configs))
+    designer = create_designer_agent_auto(_agent_model("designer", effective_model, agent_configs))
+    developer = create_developer_agent_auto(_agent_model("developer", effective_model, agent_configs))
+    reviewer = create_reviewer_agent_auto(_agent_model("reviewer", effective_model, agent_configs))
 
     # Build+Review loop: exit when approved or max iterations reached
     def _exit_condition(state: dict[str, Any], iteration: int) -> bool:
@@ -139,9 +140,9 @@ def create_dynamic_pipeline(
 
     steps: list[Any] = []
 
-    # Designer (optional)
+    # Designer (optional) - use auto factory for capability detection
     if "designer" in required_agents:
-        designer = create_designer_agent(_agent_model("designer", effective_model, agent_configs))
+        designer = create_designer_agent_auto(_agent_model("designer", effective_model, agent_configs))
         steps.append(
             (
                 designer,
@@ -153,11 +154,12 @@ def create_dynamic_pipeline(
             )
         )
 
-    # Developer (always required)
-    developer = create_developer_agent(_agent_model("developer", effective_model, agent_configs))
+    # Developer (always required) - use auto factory for capability detection
+    developer = create_developer_agent_auto(_agent_model("developer", effective_model, agent_configs))
 
     if "reviewer" in required_agents:
-        reviewer = create_reviewer_agent(_agent_model("reviewer", effective_model, agent_configs))
+        # Use auto factory for capability detection
+        reviewer = create_reviewer_agent_auto(_agent_model("reviewer", effective_model, agent_configs))
 
         def _exit_condition(state: dict[str, Any], iteration: int) -> bool:
             feedback_text = state.get("review_feedback", "")
