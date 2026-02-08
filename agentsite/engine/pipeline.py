@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 import time
@@ -9,7 +10,7 @@ from collections.abc import Callable
 from datetime import datetime, timezone
 from typing import Any
 
-from prompture import GroupCallbacks, GroupResult, SequentialGroup
+from prompture import AsyncSequentialGroup, GroupCallbacks, GroupResult
 from prompture.group_types import ErrorPolicy
 
 from ..agents.orchestrator import _agent_model, create_dynamic_pipeline
@@ -35,6 +36,33 @@ def _agent_name_to_key(name: str) -> str:
         "agentsite_reviewer": "reviewer",
     }
     return _NAME_MAP.get(name, name)
+
+
+def _attach_streaming_callbacks(group: Any, emit_fn: Any) -> None:
+    """Attach AgentCallbacks for real-time tool start/end events to all agents in a group."""
+    try:
+        from prompture import AgentCallbacks
+    except ImportError:
+        return  # AgentCallbacks not available in this version
+
+    agents = getattr(group, "_agents", [])
+    for item in agents:
+        agent = item[0] if isinstance(item, tuple) else item
+        if hasattr(agent, "_agents"):
+            _attach_streaming_callbacks(agent, emit_fn)
+        else:
+            agent_key = _agent_name_to_key(agent.name)
+
+            async def _on_tool_start(name: str, args: Any, *, _key: str = agent_key) -> None:
+                await emit_fn("tool_start", agent=_key, data={"name": name, "args": args})
+
+            async def _on_tool_end(name: str, result: Any, *, _key: str = agent_key) -> None:
+                await emit_fn("tool_end", agent=_key, data={"name": name, "result": str(result)[:500]})
+
+            agent.callbacks = AgentCallbacks(
+                on_tool_start=_on_tool_start,
+                on_tool_end=_on_tool_end,
+            )
 
 
 def _patch_pipeline_deps(group: Any, deps: Any) -> None:
@@ -81,9 +109,9 @@ def _merge_nested_group_state(group: Any) -> None:
 def _wrap_agent_run(agent: Any, deps: Any) -> None:
     original_run = agent.run
 
-    def _patched_run(prompt: str, **kwargs: Any) -> Any:
+    async def _patched_run(prompt: str, **kwargs: Any) -> Any:
         kwargs.setdefault("deps", deps)
-        return original_run(prompt, **kwargs)
+        return await original_run(prompt, **kwargs)
 
     agent.run = _patched_run
 
@@ -112,12 +140,14 @@ class GenerationPipeline:
         self._developer_tool_calls: list[dict] = []  # tool calls from developer agent
         self._agent_models: dict[str, str] = {}  # agent_key -> resolved model name
 
-    def _emit(self, event_type: str, agent: str = "", data: dict[str, Any] | None = None) -> None:
+    async def _emit(self, event_type: str, agent: str = "", data: dict[str, Any] | None = None) -> None:
         """Fire a WebSocket event if a callback is registered."""
         if self._on_event:
-            self._on_event(WSEvent(type=event_type, agent=agent, data=data or {}))
+            result = self._on_event(WSEvent(type=event_type, agent=agent, data=data or {}))
+            if asyncio.iscoroutine(result):
+                await result
 
-    def generate(
+    async def generate(
         self,
         project: Project,
         *,
@@ -144,15 +174,23 @@ class GenerationPipeline:
         # Track written files for WS events
         written_files: list[str] = []
 
+        _background_tasks: list[asyncio.Task] = []  # prevent GC of fire-and-forget tasks
+
         def _on_file_written(path: str) -> None:
             written_files.append(path)
-            self._emit("file_written", data={"path": path})
+            try:
+                loop = asyncio.get_running_loop()
+                task = loop.create_task(self._emit("file_written", data={"path": path}))
+                _background_tasks.append(task)
+                task.add_done_callback(_background_tasks.remove)
+            except RuntimeError:
+                pass  # No event loop in thread context — file_written events are nice-to-have
 
-        def _on_agent_start(name: str, prompt: str) -> None:
+        async def _on_agent_start(name: str, prompt: str) -> None:
             agent_key = _agent_name_to_key(name)
             started_at = datetime.now(timezone.utc).isoformat()
             agent_model = self._agent_models.get(agent_key, "")
-            self._emit("agent_start", agent=agent_key, data={"started_at": started_at, "model": agent_model})
+            await self._emit("agent_start", agent=agent_key, data={"started_at": started_at, "model": agent_model})
             run = AgentRun(
                 project_id=project.id,
                 page_slug=slug,
@@ -164,7 +202,7 @@ class GenerationPipeline:
             self._run_start_times[name] = time.monotonic()
             self.agent_runs.append(run)
 
-        def _on_agent_complete(name: str, result: Any) -> None:
+        async def _on_agent_complete(name: str, result: Any) -> None:
             agent_key = _agent_name_to_key(name)
             run = self._active_runs.pop(name, None)
             start_time = self._run_start_times.pop(name, None)
@@ -243,7 +281,7 @@ class GenerationPipeline:
 
             agent_model = self._agent_models.get(agent_key, "")
             agent_cost = run.cost if run else 0.0
-            self._emit(
+            await self._emit(
                 "agent_complete",
                 agent=agent_key,
                 data={
@@ -259,26 +297,27 @@ class GenerationPipeline:
                 },
             )
 
-        def _on_agent_error(name: str, exc: Exception) -> None:
+        async def _on_agent_error(name: str, exc: Exception) -> None:
             agent_key = _agent_name_to_key(name)
             # Emit as "agent_error" (non-fatal) rather than "error" (fatal).
             # The pipeline may retry this agent with a fallback, so we don't
             # want the frontend to disconnect the WebSocket prematurely.
-            self._emit("agent_error", agent=agent_key, data={"message": str(exc)})
+            await self._emit("agent_error", agent=agent_key, data={"message": str(exc)})
             run = self._active_runs.pop(name, None)
             if run:
                 run.status = "failed"
                 run.completed_at = datetime.now(timezone.utc).isoformat()
                 run.output_summary = {"error": str(exc)}
 
+        async def _on_state_update(key: str, value: Any) -> None:
+            await self._emit("state_update", data={"key": key, "value_preview": str(value)[:200]})
+
         # Build group callbacks that bridge to WS events
         group_callbacks = GroupCallbacks(
             on_agent_start=_on_agent_start,
             on_agent_complete=_on_agent_complete,
             on_agent_error=_on_agent_error,
-            on_state_update=lambda key, value: self._emit(
-                "state_update", data={"key": key, "value_preview": str(value)[:200]}
-            ),
+            on_state_update=_on_state_update,
         )
 
         # Inject deps for tools (they read from RunContext.deps)
@@ -289,7 +328,7 @@ class GenerationPipeline:
             "written_files": written_files,
         }
 
-        self._emit("phase_start", data={"phase": "planning", "slug": slug, "version": version_number})
+        await self._emit("phase_start", data={"phase": "planning", "slug": slug, "version": version_number})
 
         try:
             # --- Resolve model for each agent and store for WS events ---
@@ -308,15 +347,16 @@ class GenerationPipeline:
                 on_agent_complete=_on_agent_complete,
                 on_agent_error=_on_agent_error,
             )
-            pm_pipeline = SequentialGroup(
+            pm_pipeline = AsyncSequentialGroup(
                 [(pm_agent, "{prompt}")],
                 callbacks=pm_callbacks,
                 state={"prompt": page_prompt},
                 error_policy=ErrorPolicy.raise_on_error,
             )
             _patch_pipeline_deps(pm_pipeline, deps)
+            _attach_streaming_callbacks(pm_pipeline, self._emit)
 
-            pm_result = pm_pipeline.run(page_prompt)
+            pm_result = await pm_pipeline.run(page_prompt)
             site_plan_text = pm_result.shared_state.get("site_plan", "")
 
             # Parse required_agents from the PM output
@@ -336,7 +376,7 @@ class GenerationPipeline:
 
             # Emit pipeline_plan event so frontend knows which agents will run
             all_agents = ["pm"] + [a for a in required_agents]
-            self._emit("pipeline_plan", data={"required_agents": all_agents})
+            await self._emit("pipeline_plan", data={"required_agents": all_agents})
 
             # --- Phase B: Run Designer standalone (with fallback) if needed ---
             initial_state = {
@@ -370,15 +410,16 @@ class GenerationPipeline:
                     on_agent_error=_on_agent_error,
                 )
 
-                designer_pipeline = SequentialGroup(
+                designer_pipeline = AsyncSequentialGroup(
                     [(designer_agent, "{designer_prompt}")],
                     callbacks=designer_callbacks,
                     state={"designer_prompt": designer_prompt},
                     error_policy=ErrorPolicy.raise_on_error,
                 )
                 _patch_pipeline_deps(designer_pipeline, deps)
+                _attach_streaming_callbacks(designer_pipeline, self._emit)
 
-                designer_result = designer_pipeline.run(designer_prompt)
+                designer_result = await designer_pipeline.run(designer_prompt)
                 style_spec_text = designer_result.shared_state.get("style_spec", "")
 
                 initial_state["style_spec"] = style_spec_text
@@ -415,10 +456,11 @@ class GenerationPipeline:
             remaining_pipeline.inject_state(initial_state, recursive=True)
 
             _patch_pipeline_deps(remaining_pipeline, deps)
+            _attach_streaming_callbacks(remaining_pipeline, self._emit)
 
             _need_dev_fallback = False
             try:
-                result = remaining_pipeline.run("")
+                result = await remaining_pipeline.run("")
             except Exception as dev_exc:
                 logger.warning(
                     "Developer pipeline failed (tools may be unsupported), will retry with plain text developer: %s",
@@ -482,14 +524,15 @@ class GenerationPipeline:
                     on_agent_complete=_on_agent_complete,
                     on_agent_error=_on_agent_error,
                 )
-                dev_pipeline_plain = SequentialGroup(
+                dev_pipeline_plain = AsyncSequentialGroup(
                     [(dev_agent_plain, "{dev_prompt}")],
                     callbacks=dev_callbacks,
                     state={"dev_prompt": dev_prompt},
                     error_policy=ErrorPolicy.raise_on_error,
                 )
                 _patch_pipeline_deps(dev_pipeline_plain, deps)
-                plain_result = dev_pipeline_plain.run(dev_prompt)
+                _attach_streaming_callbacks(dev_pipeline_plain, self._emit)
+                plain_result = await dev_pipeline_plain.run(dev_prompt)
 
                 # Use the plain result's usage and state
                 if hasattr(plain_result, "aggregate_usage"):
@@ -593,7 +636,7 @@ class GenerationPipeline:
                 if content is not None:
                     files_content[fpath] = content
 
-            self._emit(
+            await self._emit(
                 "generation_complete",
                 data={
                     "success": result.success,
@@ -613,8 +656,8 @@ class GenerationPipeline:
             import traceback
 
             logger.exception("Generation failed for project %s page %s v%d", project.id, slug, version_number)
-            self._emit("error", data={"message": str(exc), "traceback": traceback.format_exc()})
-            self._emit(
+            await self._emit("error", data={"message": str(exc), "traceback": traceback.format_exc()})
+            await self._emit(
                 "generation_complete",
                 data={
                     "success": False,

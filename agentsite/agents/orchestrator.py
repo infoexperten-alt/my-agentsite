@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from prompture import GroupCallbacks, LoopGroup, SequentialGroup
+from prompture import AsyncLoopGroup, AsyncSequentialGroup, GroupCallbacks
 
 from ..config import settings
 from ..models import AgentConfig
@@ -21,7 +21,7 @@ def create_pipeline(
     max_review_iterations: int | None = None,
     review_threshold: int | None = None,
     agent_configs: dict[str, AgentConfig] | None = None,
-) -> SequentialGroup:
+) -> AsyncSequentialGroup:
     """Build the full generation pipeline (static — all 4 agents).
 
     Pipeline structure::
@@ -60,7 +60,7 @@ def create_pipeline(
         lower = feedback_text.lower()
         return '"approved": true' in lower or '"approved":true' in lower
 
-    build_review_loop = LoopGroup(
+    build_review_loop = AsyncLoopGroup(
         [
             (
                 developer,
@@ -92,7 +92,7 @@ def create_pipeline(
     )
 
     # Full pipeline
-    pipeline = SequentialGroup(
+    pipeline = AsyncSequentialGroup(
         [
             (pm, "{prompt}"),
             (
@@ -120,7 +120,7 @@ def create_dynamic_pipeline(
     review_threshold: int | None = None,
     agent_configs: dict[str, AgentConfig] | None = None,
     error_policy: Any = None,
-) -> SequentialGroup:
+) -> AsyncSequentialGroup:
     """Build a dynamic pipeline based on PM's required_agents output.
 
     PM always runs before this. This builds the remaining pipeline steps
@@ -169,7 +169,7 @@ def create_dynamic_pipeline(
                 return True
             return False
 
-        build_review_loop = LoopGroup(
+        build_review_loop = AsyncLoopGroup(
             [
                 (
                     developer,
@@ -220,7 +220,7 @@ def create_dynamic_pipeline(
     kwargs: dict[str, Any] = {"callbacks": callbacks}
     if error_policy is not None:
         kwargs["error_policy"] = error_policy
-    return SequentialGroup(steps, **kwargs)
+    return AsyncSequentialGroup(steps, **kwargs)
 
 
 def _agent_model(

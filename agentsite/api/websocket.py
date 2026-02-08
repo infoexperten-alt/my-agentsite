@@ -2,10 +2,7 @@
 
 from __future__ import annotations
 
-import asyncio
-import json
 import logging
-from typing import Any
 
 from fastapi import WebSocket
 
@@ -50,16 +47,11 @@ class WebSocketManager:
         for ws in dead:
             self.disconnect(project_id, ws)
 
-    def make_callback(self, project_id: str, loop: asyncio.AbstractEventLoop):
-        """Create a sync callback that bridges to async broadcast.
+    def make_callback(self, project_id: str):
+        """Return an async callback for GenerationPipeline.on_event."""
 
-        Returns a callable suitable for GenerationPipeline.on_event.
-        """
-
-        def _on_event(event: WSEvent) -> None:
-            asyncio.run_coroutine_threadsafe(
-                self.broadcast(project_id, event), loop
-            )
+        async def _on_event(event: WSEvent) -> None:
+            await self.broadcast(project_id, event)
 
         return _on_event
 

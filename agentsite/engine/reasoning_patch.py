@@ -18,16 +18,16 @@ logger = logging.getLogger("agentsite.reasoning_patch")
 
 
 def apply_reasoning_patch() -> None:
-    """Monkey-patch ``Conversation.ask`` to store reasoning on messages."""
-    from prompture import Conversation
+    """Monkey-patch ``AsyncConversation.ask`` to store reasoning on messages."""
+    from prompture import AsyncConversation
 
-    if getattr(Conversation.ask, "_reasoning_patched", False):
+    if getattr(AsyncConversation.ask, "_reasoning_patched", False):
         return
 
-    original_ask = Conversation.ask
+    original_ask = AsyncConversation.ask
 
-    def _patched_ask(self, content, **kwargs):  # type: ignore[no-untyped-def]
-        result = original_ask(self, content, **kwargs)
+    async def _patched_ask(self, content, **kwargs):  # type: ignore[no-untyped-def]
+        result = await original_ask(self, content, **kwargs)
         reasoning = self.last_reasoning
         if reasoning:
             # Walk backwards to find the last assistant message and annotate it.
@@ -38,5 +38,5 @@ def apply_reasoning_patch() -> None:
         return result
 
     _patched_ask._reasoning_patched = True  # type: ignore[attr-defined]
-    Conversation.ask = _patched_ask  # type: ignore[assignment]
-    logger.debug("Reasoning patch applied to Conversation.ask")
+    AsyncConversation.ask = _patched_ask  # type: ignore[assignment]
+    logger.debug("Reasoning patch applied to AsyncConversation.ask")
