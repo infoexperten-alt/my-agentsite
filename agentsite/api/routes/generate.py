@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timezone
 
 from fastapi import APIRouter, Depends, HTTPException, WebSocket, WebSocketDisconnect
@@ -17,10 +16,6 @@ from ..websocket import ws_manager
 
 logger = logging.getLogger("agentsite.api.generate")
 router = APIRouter(tags=["generate"])
-
-# Thread pool for running sync Prompture pipelines
-_executor = ThreadPoolExecutor(max_workers=2, thread_name_prefix="agentsite-gen")
-
 
 class GenerateRequest(BaseModel):
     prompt: str = ""
@@ -82,9 +77,7 @@ async def start_generation(
     )
     await version_repo.create(version)
 
-    # Get event loop for WS bridge
-    loop = asyncio.get_running_loop()
-    on_event = ws_manager.make_callback(project_id, loop)
+    on_event = ws_manager.make_callback(project_id)
 
     # Load agent configs from DB for pipeline customization
     configs_list = await agent_config_repo.list_all()
@@ -93,17 +86,13 @@ async def start_generation(
     # Build pipeline
     pipeline = GenerationPipeline(pm, on_event=on_event, agent_configs=agent_configs)
 
-    # Run in thread pool (Prompture groups are synchronous)
     async def _run():
         try:
-            result = await loop.run_in_executor(
-                _executor,
-                lambda: pipeline.generate(
-                    project,
-                    slug=slug,
-                    version_number=version_number,
-                    page_prompt=prompt,
-                ),
+            result = await pipeline.generate(
+                project,
+                slug=slug,
+                version_number=version_number,
+                page_prompt=prompt,
             )
             # Read generated files from disk into version record
             file_list = pm.list_version_files(project.id, slug, version_number)

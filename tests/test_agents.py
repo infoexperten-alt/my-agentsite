@@ -1,6 +1,7 @@
 """Tests for AgentSite agent creation and personas."""
 
-from prompture import Agent, Persona
+from prompture import AsyncAgent as Agent
+from prompture import Persona
 
 from agentsite.agents.designer import (
     create_designer_agent,

@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from prompture import Agent
+from prompture import AsyncAgent as Agent
 
 from ..engine.capabilities import supports_structured_output
 from ..models import StyleSpec

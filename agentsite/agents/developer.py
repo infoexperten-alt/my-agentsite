@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from prompture import Agent
+from prompture import AsyncAgent as Agent
 
 from ..engine.capabilities import supports_tools
 from .personas import DEVELOPER_PERSONA

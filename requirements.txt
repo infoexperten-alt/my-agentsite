@@ -1,4 +1,4 @@
-prompture>=0.0.49
+prompture>=1.0.8
 fastapi>=0.100
 uvicorn[standard]>=0.20
 aiosqlite>=0.19

@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import json
 
-from prompture import Agent
+from prompture import AsyncAgent as Agent
 
 from ..engine.capabilities import supports_structured_output, supports_tools
 from ..models import ReviewFeedback

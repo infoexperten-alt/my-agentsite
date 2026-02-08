@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import json
 import sys
 
@@ -99,11 +100,13 @@ def generate(prompt: str, model: str | None, output: str | None, name: str | Non
     pipeline = GenerationPipeline(pm, on_event=_on_event)
 
     try:
-        result = pipeline.generate(
-            project,
-            slug=page,
-            version_number=1,
-            page_prompt=prompt,
+        result = asyncio.run(
+            pipeline.generate(
+                project,
+                slug=page,
+                version_number=1,
+                page_prompt=prompt,
+            )
         )
         version_dir = pm.version_dir(project.id, page, 1)
 
