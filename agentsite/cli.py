@@ -125,6 +125,13 @@ def generate(prompt: str, model: str | None, output: str | None, name: str | Non
             cost = usage.get("cost", 0.0) or usage.get("total_cost", 0.0)
             click.echo(f"\nUsage: {tokens:,} tokens, ${cost:.4f}")
 
+            # Show per-model breakdown if available and has multiple models
+            models = usage.get("models")
+            if isinstance(models, dict) and len(models) > 1:
+                click.echo("  Per model:")
+                for model_name, model_cost in sorted(models.items()):
+                    click.echo(f"    {model_name}: ${model_cost:.4f}")
+
     except Exception as exc:
         click.secho(f"\nGeneration failed: {exc}", fg="red")
         sys.exit(1)

@@ -394,8 +394,9 @@ class AgentRunRepository:
         await self._db.conn.execute(
             """INSERT INTO agent_runs
                (id, project_id, page_slug, version, agent_name, status,
-                started_at, completed_at, input_tokens, output_tokens, cost, output_summary)
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                started_at, completed_at, input_tokens, output_tokens, cost,
+                session_id, output_summary)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
             (
                 run.id,
                 run.project_id,
@@ -408,6 +409,7 @@ class AgentRunRepository:
                 run.input_tokens,
                 run.output_tokens,
                 run.cost,
+                run.session_id,
                 json.dumps(run.output_summary),
             ),
         )
@@ -544,16 +546,22 @@ class AgentRunRepository:
             return 0
 
         try:
-            from prompture.drivers import get_driver_for_model
+            from prompture.infra import get_model_rates
 
             updated = 0
             for row in rows:
                 model_str = row["model"] or ""
-                provider = model_str.split("/")[0] if "/" in model_str else ""
-                model_id = model_str.split("/", 1)[1] if "/" in model_str else model_str
                 try:
-                    drv = get_driver_for_model(model_str)
-                    cost = drv._calculate_cost(provider, model_id, row["input_tokens"], row["output_tokens"])
+                    provider = model_str.split("/")[0] if "/" in model_str else ""
+                    model_id = model_str.split("/", 1)[1] if "/" in model_str else model_str
+                    rates = get_model_rates(provider, model_id)
+                    if rates and "input" in rates and "output" in rates:
+                        cost = (
+                            (row["input_tokens"] / 1_000_000) * rates["input"]
+                            + (row["output_tokens"] / 1_000_000) * rates["output"]
+                        )
+                    else:
+                        cost = 0.0
                 except Exception:
                     cost = 0.0
                 if cost > 0:
@@ -581,5 +589,6 @@ class AgentRunRepository:
             input_tokens=row["input_tokens"],
             output_tokens=row["output_tokens"],
             cost=row["cost"],
+            session_id=row["session_id"] if "session_id" in row else "",
             output_summary=json.loads(row["output_summary"]) if row["output_summary"] else {},
         )

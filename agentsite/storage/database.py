@@ -78,6 +78,7 @@ CREATE TABLE IF NOT EXISTS agent_runs (
     input_tokens INTEGER NOT NULL DEFAULT 0,
     output_tokens INTEGER NOT NULL DEFAULT 0,
     cost REAL NOT NULL DEFAULT 0.0,
+    session_id TEXT DEFAULT '',
     output_summary TEXT DEFAULT '{}'
 );
 """
@@ -150,6 +151,16 @@ class Database:
         else:
             # No old schema or already migrated — just clean up legacy tables
             await self._conn.executescript(MIGRATION_SQL)
+            await self._conn.commit()
+
+        # Add session_id column to agent_runs table if missing
+        cursor = await self._conn.execute("PRAGMA table_info(agent_runs)")
+        ar_columns = {row[1] for row in await cursor.fetchall()}
+        if ar_columns and "session_id" not in ar_columns:
+            logger.info("Adding 'session_id' column to agent_runs table...")
+            await self._conn.execute(
+                "ALTER TABLE agent_runs ADD COLUMN session_id TEXT DEFAULT ''"
+            )
             await self._conn.commit()
 
         # Add files column to versions table if missing (incremental migration)

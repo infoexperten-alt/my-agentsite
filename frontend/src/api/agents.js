@@ -25,3 +25,11 @@ export async function getAgentStats(since = null) {
 export async function getAgentDailyStats(days = 30) {
   return fetchJSON(`/api/agents/stats/daily?days=${days}`);
 }
+
+export async function getTodayStats() {
+  return fetchJSON("/api/agents/stats/today");
+}
+
+export async function getModelStats() {
+  return fetchJSON("/api/agents/stats/models");
+}

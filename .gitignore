@@ -214,3 +214,5 @@ frontend/dist/
 frontend/node_modules/
 
 .marketing
+prompture_cost_tracking.md
+prompture_tracking_migration.md

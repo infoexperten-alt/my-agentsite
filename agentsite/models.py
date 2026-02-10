@@ -235,6 +235,7 @@ class AgentRun(BaseModel):
     output_tokens: int = Field(default=0)
     cost: float = Field(default=0.0)
     reasoning: str = Field(default="")
+    session_id: str = Field(default="")  # Prompture tracker session ID
     output_summary: dict = Field(default_factory=dict)
 
 

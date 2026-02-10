@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback } from "react";
-import { getAgentStats, getAgentRuns, getAgentDailyStats } from "../api/agents";
+import { getAgentStats, getAgentRuns, getAgentDailyStats, getTodayStats } from "../api/agents";
 
 function timeFilterToParams(timeFilter) {
   const now = new Date();
@@ -27,12 +27,16 @@ export function useAnalytics(timeFilter = "Last 30 Days") {
     setLoading(true);
     const { since, days } = timeFilterToParams(timeFilter);
     try {
-      const [statsRes, dailyRes, runsRes] = await Promise.all([
+      const [statsRes, dailyRes, runsRes, todayRes] = await Promise.all([
         getAgentStats(since),
         getAgentDailyStats(days),
         getAgentRuns(100, since),
+        getTodayStats().catch(() => ({ cost_today: 0, cost_this_month: 0 })),
       ]);
-      setStats(statsRes);
+      // Merge tracker cost data into stats (prefer enriched /stats values, fallback to /stats/today)
+      const costToday = statsRes.cost_today ?? todayRes.cost_today ?? 0;
+      const costThisMonth = statsRes.cost_this_month ?? todayRes.cost_this_month ?? 0;
+      setStats({ ...statsRes, cost_today: costToday, cost_this_month: costThisMonth });
       setDailyStats(dailyRes);
       setRuns(runsRes);
     } catch (err) {

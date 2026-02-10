@@ -20,6 +20,11 @@ from .gemini_patch import apply_gemini_patch
 from .project_manager import ProjectManager
 from .reasoning_patch import apply_reasoning_patch
 
+try:
+    from prompture.infra.session import UsageSession as _UsageSession
+except ImportError:  # graceful degradation if tracker not available
+    _UsageSession = None
+
 logger = logging.getLogger("agentsite.pipeline")
 
 # Apply patches at import time
@@ -139,6 +144,7 @@ class GenerationPipeline:
         self._developer_output_text: str = ""  # direct capture from callback
         self._developer_tool_calls: list[dict] = []  # tool calls from developer agent
         self._agent_models: dict[str, str] = {}  # agent_key -> resolved model name
+        self._tracker_agent_cms: dict[str, Any] = {}  # active tracker agent contexts
 
     async def _emit(self, event_type: str, agent: str = "", data: dict[str, Any] | None = None) -> None:
         """Fire a WebSocket event if a callback is registered."""
@@ -197,6 +203,7 @@ class GenerationPipeline:
                 version=version_number,
                 agent_name=agent_key,
                 status="running",
+                session_id=session_id,
             )
             self._active_runs[name] = run
             self._run_start_times[name] = time.monotonic()
@@ -329,6 +336,15 @@ class GenerationPipeline:
         }
 
         await self._emit("phase_start", data={"phase": "planning", "slug": slug, "version": version_number})
+
+        # Set up Prompture usage session for this generation
+        session_id = f"gen-{project.id}-{slug}-v{version_number}"
+        tracker: Any = None
+        if _UsageSession is not None:
+            try:
+                tracker = _UsageSession()
+            except Exception:
+                tracker = None
 
         try:
             # --- Resolve model for each agent and store for WS events ---
@@ -543,12 +559,30 @@ class GenerationPipeline:
                             result.aggregate_usage[k] = result.aggregate_usage.get(k, 0) + v
                 result = plain_result
 
-            # Merge usage from both phases
-            combined_usage = pm_result.aggregate_usage.copy() if hasattr(pm_result, "aggregate_usage") else {}
-            if hasattr(result, "aggregate_usage"):
-                for k, v in result.aggregate_usage.items():
-                    if isinstance(v, (int, float)):
-                        combined_usage[k] = combined_usage.get(k, 0) + v
+            # Build combined_usage: prefer tracker summary, fall back to manual merge
+            combined_usage: dict[str, Any] = {}
+            if tracker is not None and tracker.call_count > 0:
+                try:
+                    s = tracker.summary()
+                    combined_usage = {
+                        "total_tokens": s.get("total_tokens", 0),
+                        "input_tokens": s.get("prompt_tokens", 0),
+                        "output_tokens": s.get("completion_tokens", 0),
+                        "cost": s.get("total_cost", 0.0),
+                        "total_cost": s.get("total_cost", 0.0),
+                        "elapsed_ms": s.get("total_elapsed_ms", 0.0),
+                        "models": s.get("per_model", {}),
+                    }
+                except Exception:
+                    combined_usage = {}
+
+            if not combined_usage:
+                # Fallback: manual merge from both phases
+                combined_usage = pm_result.aggregate_usage.copy() if hasattr(pm_result, "aggregate_usage") else {}
+                if hasattr(result, "aggregate_usage"):
+                    for k, v in result.aggregate_usage.items():
+                        if isinstance(v, (int, float)):
+                            combined_usage[k] = combined_usage.get(k, 0) + v
 
             # Extract structured outputs from shared state —
             # check both the result's shared_state and the pipeline's
@@ -668,6 +702,15 @@ class GenerationPipeline:
                 },
             )
             raise
+
+        finally:
+            # Clean up tracker agent contexts if any were left open
+            for cm in self._tracker_agent_cms.values():
+                try:
+                    cm.__exit__(None, None, None)
+                except Exception:
+                    pass
+            self._tracker_agent_cms.clear()
 
     def _write_files_from_tool_calls(self, project_id: str, slug: str, version: int, tool_calls: list[dict]) -> None:
         """Extract files from write_file tool call arguments and write them to disk."""
