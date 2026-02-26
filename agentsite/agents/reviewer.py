@@ -9,7 +9,7 @@ from prompture import AsyncAgent as Agent
 from ..engine.capabilities import supports_structured_output, supports_tools
 from ..models import ReviewFeedback
 from .personas import REVIEWER_PERSONA
-from .tools import list_files, read_file
+from .tools import reviewer_tools
 
 
 def create_reviewer_agent_auto(model: str) -> Agent:
@@ -37,7 +37,7 @@ def create_reviewer_agent(model: str) -> Agent:
         model,
         system_prompt=REVIEWER_PERSONA,
         output_type=ReviewFeedback,
-        tools=[read_file, list_files],
+        tools=reviewer_tools,
         name="reviewer",
         description="Reviews generated code for quality and accessibility",
         output_key="review_feedback",
@@ -53,13 +53,12 @@ def create_reviewer_agent_tools_only(model: str) -> Agent:
     json_schema = ReviewFeedback.model_json_schema()
     return Agent(
         model,
-        system_prompt=(
-            REVIEWER_PERSONA.system_prompt
-            + "\n\nIMPORTANT: You MUST respond with ONLY a valid JSON object matching this schema:\n"
-            + f"```json\n{json.dumps(json_schema, indent=2)}\n```\n"
+        system_prompt=REVIEWER_PERSONA.extend(
+            "IMPORTANT: You MUST respond with ONLY a valid JSON object matching this schema:\n"
+            f"```json\n{json.dumps(json_schema, indent=2)}\n```\n"
             "Do NOT include any text before or after the JSON. Return ONLY the JSON object."
         ),
-        tools=[read_file, list_files],
+        tools=reviewer_tools,
         name="reviewer",
         description="Reviews generated code (tools only mode)",
         output_key="review_feedback",
@@ -76,10 +75,9 @@ def create_reviewer_agent_plain(model: str) -> Agent:
     json_schema = ReviewFeedback.model_json_schema()
     return Agent(
         model,
-        system_prompt=(
-            REVIEWER_PERSONA.system_prompt
-            + "\n\nIMPORTANT: You MUST respond with ONLY a valid JSON object matching this schema:\n"
-            + f"```json\n{json.dumps(json_schema, indent=2)}\n```\n"
+        system_prompt=REVIEWER_PERSONA.extend(
+            "IMPORTANT: You MUST respond with ONLY a valid JSON object matching this schema:\n"
+            f"```json\n{json.dumps(json_schema, indent=2)}\n```\n"
             "Do NOT include any text before or after the JSON. Return ONLY the JSON object.\n"
             "The generated code will be provided to you directly in the prompt."
         ),

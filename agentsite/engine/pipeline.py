@@ -10,25 +10,17 @@ from collections.abc import Callable
 from datetime import datetime, timezone
 from typing import Any
 
-from prompture import AsyncSequentialGroup, GroupCallbacks, GroupResult
-from prompture.group_types import ErrorPolicy
+from prompture import AsyncSequentialGroup, ErrorPolicy, GroupCallbacks, GroupResult
 
-from ..agents.orchestrator import _agent_model, create_dynamic_pipeline
+from ..agents.orchestrator import _agent_model, _apply_agent_overrides, create_dynamic_pipeline
 from ..config import settings
 from ..models import AgentConfig, AgentRun, PageOutput, Project, SitePlan, StyleSpec, WSEvent
-from .gemini_patch import apply_gemini_patch
 from .project_manager import ProjectManager
 from .reasoning_patch import apply_reasoning_patch
-
-try:
-    from prompture.infra.session import UsageSession as _UsageSession
-except ImportError:  # graceful degradation if tracker not available
-    _UsageSession = None
 
 logger = logging.getLogger("agentsite.pipeline")
 
 # Apply patches at import time
-apply_gemini_patch()
 apply_reasoning_patch()
 
 
@@ -64,29 +56,26 @@ def _attach_streaming_callbacks(group: Any, emit_fn: Any) -> None:
             async def _on_tool_end(name: str, result: Any, *, _key: str = agent_key) -> None:
                 await emit_fn("tool_end", agent=_key, data={"name": name, "result": str(result)[:500]})
 
+            async def _on_thinking(text: str, *, _key: str = agent_key) -> None:
+                await emit_fn("agent_thinking", agent=_key, data={"text": text[:2000]})
+
+            async def _on_step(step: Any, *, _key: str = agent_key) -> None:
+                await emit_fn("agent_step", agent=_key, data={
+                    "step_type": step.step_type.value if hasattr(step.step_type, "value") else str(step.step_type),
+                    "content": (step.content or "")[:500],
+                    "tool_name": getattr(step, "tool_name", None),
+                })
+
+            async def _on_iteration(idx: int, *, _key: str = agent_key) -> None:
+                await emit_fn("agent_iteration", agent=_key, data={"iteration": idx})
+
             agent.callbacks = AgentCallbacks(
                 on_tool_start=_on_tool_start,
                 on_tool_end=_on_tool_end,
+                on_thinking=_on_thinking,
+                on_step=_on_step,
+                on_iteration=_on_iteration,
             )
-
-
-def _patch_pipeline_deps(group: Any, deps: Any) -> None:
-    """Monkey-patch every agent in a group so ``deps`` is always forwarded.
-
-    ``SequentialGroup.run()`` and ``LoopGroup.run()`` call
-    ``agent.run(prompt)`` without passing ``deps``, which means tools
-    that rely on ``RunContext.deps`` receive ``None``.  This helper
-    walks the group tree and wraps each agent's ``run`` method so that
-    ``deps`` is injected automatically.
-    """
-    agents = getattr(group, "_agents", [])
-    for item in agents:
-        agent = item[0] if isinstance(item, tuple) else item
-        # Recurse into nested groups (LoopGroup inside SequentialGroup)
-        if hasattr(agent, "_agents"):
-            _patch_pipeline_deps(agent, deps)
-        else:
-            _wrap_agent_run(agent, deps)
 
 
 def _merge_nested_group_state(group: Any) -> None:
@@ -109,16 +98,6 @@ def _merge_nested_group_state(group: Any) -> None:
             # Merge child state into parent (child always wins)
             for k, v in agent.shared_state.items():
                 group._state[k] = v
-
-
-def _wrap_agent_run(agent: Any, deps: Any) -> None:
-    original_run = agent.run
-
-    async def _patched_run(prompt: str, **kwargs: Any) -> Any:
-        kwargs.setdefault("deps", deps)
-        return await original_run(prompt, **kwargs)
-
-    agent.run = _patched_run
 
 
 class GenerationPipeline:
@@ -144,7 +123,8 @@ class GenerationPipeline:
         self._developer_output_text: str = ""  # direct capture from callback
         self._developer_tool_calls: list[dict] = []  # tool calls from developer agent
         self._agent_models: dict[str, str] = {}  # agent_key -> resolved model name
-        self._tracker_agent_cms: dict[str, Any] = {}  # active tracker agent contexts
+        self.site_plan_text: str = ""  # raw PM output for guide persistence
+        self.style_spec_text: str = ""  # raw Designer output for project persistence
 
     async def _emit(self, event_type: str, agent: str = "", data: dict[str, Any] | None = None) -> None:
         """Fire a WebSocket event if a callback is registered."""
@@ -319,12 +299,20 @@ class GenerationPipeline:
         async def _on_state_update(key: str, value: Any) -> None:
             await self._emit("state_update", data={"key": key, "value_preview": str(value)[:200]})
 
+        async def _on_round_start(round_number: int) -> None:
+            await self._emit("round_start", data={"round": round_number})
+
+        async def _on_round_complete(round_number: int) -> None:
+            await self._emit("round_complete", data={"round": round_number})
+
         # Build group callbacks that bridge to WS events
         group_callbacks = GroupCallbacks(
             on_agent_start=_on_agent_start,
             on_agent_complete=_on_agent_complete,
             on_agent_error=_on_agent_error,
             on_state_update=_on_state_update,
+            on_round_start=_on_round_start,
+            on_round_complete=_on_round_complete,
         )
 
         # Inject deps for tools (they read from RunContext.deps)
@@ -337,14 +325,7 @@ class GenerationPipeline:
 
         await self._emit("phase_start", data={"phase": "planning", "slug": slug, "version": version_number})
 
-        # Set up Prompture usage session for this generation
         session_id = f"gen-{project.id}-{slug}-v{version_number}"
-        tracker: Any = None
-        if _UsageSession is not None:
-            try:
-                tracker = _UsageSession()
-            except Exception:
-                tracker = None
 
         try:
             # --- Resolve model for each agent and store for WS events ---
@@ -357,6 +338,7 @@ class GenerationPipeline:
             pm_model = self._agent_models["pm"]
             # Use auto factory to select structured/plain mode based on capabilities
             pm_agent = create_pm_agent_auto(pm_model)
+            _apply_agent_overrides(pm_agent, "pm", self._agent_configs)
 
             pm_callbacks = GroupCallbacks(
                 on_agent_start=_on_agent_start,
@@ -368,12 +350,20 @@ class GenerationPipeline:
                 callbacks=pm_callbacks,
                 state={"prompt": page_prompt},
                 error_policy=ErrorPolicy.raise_on_error,
+                deps=deps,
             )
-            _patch_pipeline_deps(pm_pipeline, deps)
             _attach_streaming_callbacks(pm_pipeline, self._emit)
 
             pm_result = await pm_pipeline.run(page_prompt)
             site_plan_text = pm_result.shared_state.get("site_plan", "")
+            self.site_plan_text = site_plan_text
+
+            # Persist site plan as a guide file for the Navigation page
+            if site_plan_text:
+                try:
+                    self._pm.write_guide(project.id, "site-plan.json", site_plan_text)
+                except Exception:
+                    logger.warning("Failed to write site-plan.json guide", exc_info=True)
 
             # Parse required_agents from the PM output
             required_agents = ["designer", "developer", "reviewer"]  # default
@@ -394,6 +384,10 @@ class GenerationPipeline:
             all_agents = ["pm"] + [a for a in required_agents]
             await self._emit("pipeline_plan", data={"required_agents": all_agents})
 
+            # --- Load existing guides for template injection ---
+            design_system_guide = self._pm.read_guide(project.id, "design-system.md") or ""
+            architecture_guide = self._pm.read_guide(project.id, "architecture.md") or ""
+
             # --- Phase B: Run Designer standalone (with fallback) if needed ---
             initial_state = {
                 "prompt": page_prompt,
@@ -404,6 +398,8 @@ class GenerationPipeline:
                 "icon_url": project.icon_url or "",
                 "page_slug": slug,
                 "page_title": slug.replace("-", " ").title(),
+                "design_system_guide": design_system_guide,
+                "architecture_guide": architecture_guide,
             }
 
             if "designer" in required_agents:
@@ -412,6 +408,7 @@ class GenerationPipeline:
                 designer_model = self._agent_models["designer"]
                 # Use auto factory to select structured/plain mode based on capabilities
                 designer_agent = create_designer_agent_auto(designer_model)
+                _apply_agent_overrides(designer_agent, "designer", self._agent_configs)
                 designer_prompt = (
                     "Design a visual style for this website:\n\n"
                     f"Site Plan: {site_plan_text}\n\n"
@@ -431,12 +428,13 @@ class GenerationPipeline:
                     callbacks=designer_callbacks,
                     state={"designer_prompt": designer_prompt},
                     error_policy=ErrorPolicy.raise_on_error,
+                    deps=deps,
                 )
-                _patch_pipeline_deps(designer_pipeline, deps)
                 _attach_streaming_callbacks(designer_pipeline, self._emit)
 
                 designer_result = await designer_pipeline.run(designer_prompt)
                 style_spec_text = designer_result.shared_state.get("style_spec", "")
+                self.style_spec_text = style_spec_text
 
                 initial_state["style_spec"] = style_spec_text
 
@@ -459,19 +457,21 @@ class GenerationPipeline:
                     initial_state["style_spec"] = StyleSpec().model_dump_json()
 
             # --- Phase C: Build dynamic pipeline for developer+reviewer ---
+            max_cost = settings.max_generation_cost or None
             remaining_pipeline = create_dynamic_pipeline(
                 remaining_agents,
                 model,
                 callbacks=group_callbacks,
                 agent_configs=self._agent_configs,
                 error_policy=ErrorPolicy.raise_on_error,
+                deps=deps,
+                max_total_cost=max_cost,
             )
 
             # Transfer state from PM phase and propagate to nested groups
             # (LoopGroup) so prompt templates like {site_plan} resolve.
             remaining_pipeline.inject_state(initial_state, recursive=True)
 
-            _patch_pipeline_deps(remaining_pipeline, deps)
             _attach_streaming_callbacks(remaining_pipeline, self._emit)
 
             _need_dev_fallback = False
@@ -545,8 +545,8 @@ class GenerationPipeline:
                     callbacks=dev_callbacks,
                     state={"dev_prompt": dev_prompt},
                     error_policy=ErrorPolicy.raise_on_error,
+                    deps=deps,
                 )
-                _patch_pipeline_deps(dev_pipeline_plain, deps)
                 _attach_streaming_callbacks(dev_pipeline_plain, self._emit)
                 plain_result = await dev_pipeline_plain.run(dev_prompt)
 
@@ -559,30 +559,16 @@ class GenerationPipeline:
                             result.aggregate_usage[k] = result.aggregate_usage.get(k, 0) + v
                 result = plain_result
 
-            # Build combined_usage: prefer tracker summary, fall back to manual merge
-            combined_usage: dict[str, Any] = {}
-            if tracker is not None and tracker.call_count > 0:
-                try:
-                    s = tracker.summary()
-                    combined_usage = {
-                        "total_tokens": s.get("total_tokens", 0),
-                        "input_tokens": s.get("prompt_tokens", 0),
-                        "output_tokens": s.get("completion_tokens", 0),
-                        "cost": s.get("total_cost", 0.0),
-                        "total_cost": s.get("total_cost", 0.0),
-                        "elapsed_ms": s.get("total_elapsed_ms", 0.0),
-                        "models": s.get("per_model", {}),
-                    }
-                except Exception:
-                    combined_usage = {}
-
-            if not combined_usage:
-                # Fallback: manual merge from both phases
-                combined_usage = pm_result.aggregate_usage.copy() if hasattr(pm_result, "aggregate_usage") else {}
-                if hasattr(result, "aggregate_usage"):
-                    for k, v in result.aggregate_usage.items():
-                        if isinstance(v, (int, float)):
-                            combined_usage[k] = combined_usage.get(k, 0) + v
+            # Build combined_usage by merging both pipeline phases.
+            # The global tracker (configure_tracker) captures usage
+            # automatically for analytics; here we aggregate per-generation.
+            combined_usage: dict[str, Any] = (
+                pm_result.aggregate_usage.copy() if hasattr(pm_result, "aggregate_usage") else {}
+            )
+            if hasattr(result, "aggregate_usage"):
+                for k, v in result.aggregate_usage.items():
+                    if isinstance(v, (int, float)):
+                        combined_usage[k] = combined_usage.get(k, 0) + v
 
             # Extract structured outputs from shared state —
             # check both the result's shared_state and the pipeline's
@@ -704,13 +690,7 @@ class GenerationPipeline:
             raise
 
         finally:
-            # Clean up tracker agent contexts if any were left open
-            for cm in self._tracker_agent_cms.values():
-                try:
-                    cm.__exit__(None, None, None)
-                except Exception:
-                    pass
-            self._tracker_agent_cms.clear()
+            pass
 
     def _write_files_from_tool_calls(self, project_id: str, slug: str, version: int, tool_calls: list[dict]) -> None:
         """Extract files from write_file tool call arguments and write them to disk."""

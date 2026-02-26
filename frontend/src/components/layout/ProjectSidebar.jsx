@@ -14,7 +14,7 @@ import {
 const projectNav = [
   { path: "", label: "Overview & Pages", icon: Kanban, end: true },
   { path: "/brand", label: "Brand", icon: PaintBrush },
-  { path: "/navigation", label: "Navigation", icon: List, soon: true },
+  { path: "/navigation", label: "Navigation", icon: List },
   { path: "/library", label: "Library", icon: Books, soon: true },
   { path: "/seo", label: "SEO", icon: MagnifyingGlass, soon: true },
   { path: "/deployments", label: "Deployments", icon: Rocket, soon: true },

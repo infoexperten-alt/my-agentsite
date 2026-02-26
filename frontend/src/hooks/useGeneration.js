@@ -10,6 +10,7 @@ export default function useGeneration(projectId) {
   const [pipelineAgents, setPipelineAgents] = useState(null);
   const ws = useWebSocket(projectId);
   const versionRefreshRef = useRef(null);
+  const projectRefreshRef = useRef(null);
 
   useEffect(() => {
     const unsubs = [
@@ -45,6 +46,32 @@ export default function useGeneration(projectId) {
             ...prev[msg.agent],
             status: "retrying",
             error: msg.data?.message,
+            retryReason: msg.data?.message || "Unknown error",
+          },
+        }));
+      }),
+      ws.on("agent_thinking", (msg) => {
+        setAgents((prev) => ({
+          ...prev,
+          [msg.agent]: {
+            ...prev[msg.agent],
+            thinking: msg.data?.text || "",
+          },
+        }));
+      }),
+      ws.on("agent_step", (msg) => {
+        setAgents((prev) => {
+          const existing = prev[msg.agent] || {};
+          const steps = [...(existing.steps || []), msg.data].slice(-10);
+          return { ...prev, [msg.agent]: { ...existing, steps } };
+        });
+      }),
+      ws.on("agent_iteration", (msg) => {
+        setAgents((prev) => ({
+          ...prev,
+          [msg.agent]: {
+            ...prev[msg.agent],
+            iteration: msg.data?.iteration || 0,
           },
         }));
       }),
@@ -69,6 +96,7 @@ export default function useGeneration(projectId) {
         }
         ws.disconnect();
         versionRefreshRef.current?.();
+        projectRefreshRef.current?.();
       }),
       ws.on("error", (msg) => {
         setError((prev) => {
@@ -108,5 +136,9 @@ export default function useGeneration(projectId) {
     versionRefreshRef.current = fn;
   }, []);
 
-  return { generating, agents, files, error, pipelineAgents, start, onVersionRefresh };
+  const onProjectRefresh = useCallback((fn) => {
+    projectRefreshRef.current = fn;
+  }, []);
+
+  return { generating, agents, files, error, pipelineAgents, start, onVersionRefresh, onProjectRefresh };
 }

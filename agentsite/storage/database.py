@@ -18,6 +18,7 @@ CREATE TABLE IF NOT EXISTS projects (
     description TEXT NOT NULL DEFAULT '',
     model TEXT NOT NULL DEFAULT '',
     style_spec TEXT,
+    agent_overrides TEXT,
     created_at TEXT NOT NULL,
     updated_at TEXT NOT NULL
 );
@@ -169,6 +170,12 @@ class Database:
         if version_columns and "files" not in version_columns:
             logger.info("Adding 'files' column to versions table...")
             await self._conn.execute("ALTER TABLE versions ADD COLUMN files TEXT DEFAULT '{}'")
+            await self._conn.commit()
+
+        # Add agent_overrides column to projects table if missing
+        if columns and "agent_overrides" not in columns:
+            logger.info("Adding 'agent_overrides' column to projects table...")
+            await self._conn.execute("ALTER TABLE projects ADD COLUMN agent_overrides TEXT")
             await self._conn.commit()
 
     async def _seed_agent_configs(self) -> None:

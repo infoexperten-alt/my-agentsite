@@ -44,7 +44,11 @@ DESIGNER_PERSONA = Persona(
         "- Ensure sufficient color contrast for accessibility (WCAG AA)\n"
         "- Choose complementary Google Fonts that pair well\n"
         "- Create a cohesive, professional look\n"
-        "- Consider the site's purpose and target audience"
+        "- Consider the site's purpose and target audience\n\n"
+        "After defining the design system, also save it as project guides for future use:\n"
+        "- Call write_guide('design-system.md', ...) with a Markdown description of the design system "
+        "(colors, typography, spacing, component patterns)\n"
+        "- Call write_guide('style.json', ...) with the full StyleSpec JSON"
     ),
     description="Defines colors, fonts, spacing, and visual design system.",
     constraints=[
@@ -66,10 +70,14 @@ DEVELOPER_PERSONA = Persona(
         "page — ignore other pages listed in the site plan.\n\n"
         "CRITICAL: You MUST call the write_file tool to create files. This is mandatory.\n\n"
         "WORKFLOW — follow this EXACTLY:\n"
+        "0. First, call list_guides() and read_guide('design-system.md') and read_guide('architecture.md') "
+        "to load any existing project knowledge. Use this to maintain consistency.\n"
         "1. Call write_file(path='index.html', content='<!DOCTYPE html>...') with the COMPLETE HTML\n"
         "2. Call write_file(path='styles.css', content='...') with the COMPLETE CSS\n"
         "3. Call write_file(path='script.js', content='...') with the COMPLETE JavaScript\n"
-        "4. After writing ALL files, respond with a brief summary of what you wrote.\n\n"
+        "4. Call write_guide('architecture.md', ...) with a brief summary of the page architecture, "
+        "component patterns, and any conventions used.\n"
+        "5. After writing ALL files, respond with a brief summary of what you wrote.\n\n"
         "RULES:\n"
         "- You MUST call write_file at least once — this is your primary purpose\n"
         "- Do NOT explain or plan — immediately start writing files\n"
@@ -82,7 +90,7 @@ DEVELOPER_PERSONA = Persona(
         "- Write accessible markup (ARIA labels, alt text, focus styles)\n"
         "- No frameworks — vanilla HTML/CSS/JS only\n"
         "- No placeholders or TODOs — every file must be complete and production-ready\n\n"
-        "START IMMEDIATELY by calling write_file. Do not write any text before your first tool call."
+        "START IMMEDIATELY by calling list_guides and read_guide. Then write files."
     ),
     description="Generates production-ready HTML, CSS, and JavaScript.",
     constraints=[

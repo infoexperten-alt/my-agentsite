@@ -19,14 +19,15 @@ class ProjectRepository:
     async def create(self, project: Project) -> Project:
         """Insert a new project."""
         await self._db.conn.execute(
-            """INSERT INTO projects (id, name, description, model, style_spec, created_at, updated_at)
-               VALUES (?, ?, ?, ?, ?, ?, ?)""",
+            """INSERT INTO projects (id, name, description, model, style_spec, agent_overrides, created_at, updated_at)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
             (
                 project.id,
                 project.name,
                 project.description,
                 project.model,
                 project.style_spec.model_dump_json() if project.style_spec else None,
+                json.dumps(project.agent_overrides) if project.agent_overrides else None,
                 project.created_at,
                 project.updated_at,
             ),
@@ -53,12 +54,13 @@ class ProjectRepository:
         project.updated_at = datetime.now(timezone.utc).isoformat()
         await self._db.conn.execute(
             """UPDATE projects SET name=?, description=?, model=?, style_spec=?,
-               updated_at=? WHERE id=?""",
+               agent_overrides=?, updated_at=? WHERE id=?""",
             (
                 project.name,
                 project.description,
                 project.model,
                 project.style_spec.model_dump_json() if project.style_spec else None,
+                json.dumps(project.agent_overrides) if project.agent_overrides else None,
                 project.updated_at,
                 project.id,
             ),
@@ -77,12 +79,21 @@ class ProjectRepository:
         if row["style_spec"]:
             style_spec = StyleSpec.model_validate_json(row["style_spec"])
 
+        agent_overrides = None
+        try:
+            raw = row["agent_overrides"]
+            if raw:
+                agent_overrides = json.loads(raw)
+        except (KeyError, IndexError):
+            pass  # column may not exist in old DBs before migration runs
+
         return Project(
             id=row["id"],
             name=row["name"],
             description=row["description"],
             model=row["model"],
             style_spec=style_spec,
+            agent_overrides=agent_overrides,
             created_at=row["created_at"],
             updated_at=row["updated_at"],
         )

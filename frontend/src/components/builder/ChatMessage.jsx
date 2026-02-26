@@ -1,6 +1,6 @@
 import { useState, useEffect } from "react";
 import { createPortal } from "react-dom";
-import { Sparkle, WarningCircle, SpinnerGap, CheckCircle, CaretDown, CaretRight, Timer, Lightning, Terminal, Copy, ArrowsOut, X, Export, Brain } from "@phosphor-icons/react";
+import { Sparkle, WarningCircle, SpinnerGap, CheckCircle, CaretDown, CaretRight, Timer, Lightning, Terminal, Copy, ArrowsOut, X, Export, Brain, ArrowCounterClockwise, Wrench } from "@phosphor-icons/react";
 
 function formatDuration(seconds) {
   if (seconds < 60) return `${Math.round(seconds * 10) / 10}s`;
@@ -43,6 +43,10 @@ function AgentRow({ agent: a }) {
   const hasReasoning = a.status === "complete" && !!a.reasoning;
   const fullText = a.full_output || a.output_preview || "";
   const hasMore = fullText.length > (a.output_preview || "").length;
+  const isRunning = a.status === "running";
+  const isRetrying = a.status === "retrying";
+  const hasLiveThinking = isRunning && !!a.thinking;
+  const hasLiveSteps = isRunning && a.steps && a.steps.length > 0;
 
   const handleCopy = async (e) => {
     e.stopPropagation();
@@ -59,19 +63,25 @@ function AgentRow({ agent: a }) {
         {a.status === "complete" && (
           <CheckCircle className="text-emerald-400 shrink-0" weight="fill" size={12} />
         )}
-        {a.status === "running" && (
+        {isRunning && (
           <SpinnerGap className="animate-spin text-brand-400 shrink-0" size={12} />
+        )}
+        {isRetrying && (
+          <ArrowCounterClockwise className="animate-spin text-amber-400 shrink-0" size={12} />
         )}
         {a.status === "pending" && (
           <div className="w-3 h-3 rounded-full border border-slate-600 shrink-0" />
         )}
-        <span className={`flex-1 ${a.status === "pending" ? "text-slate-500" : "text-slate-300"}`}>
+        <span className={`flex-1 ${a.status === "pending" ? "text-slate-500" : isRetrying ? "text-amber-300" : "text-slate-300"}`}>
           {a.label}
+          {a.iteration > 0 && (
+            <span className="ml-1 text-[10px] text-amber-500 font-medium">retry #{a.iteration}</span>
+          )}
           {a.model && (
             <span className="ml-1.5 text-[10px] text-slate-600 font-normal" title={a.model}>{shortModelName(a.model)}</span>
           )}
         </span>
-        {a.status === "running" && a.startedAt && (
+        {isRunning && a.startedAt && (
           <ElapsedTimer since={a.startedAt} />
         )}
         {a.status === "complete" && a.duration_s != null && (
@@ -110,6 +120,38 @@ function AgentRow({ agent: a }) {
           </div>
         )}
       </div>
+      {/* Retry reason */}
+      {isRetrying && a.retryReason && (
+        <div className="mt-1.5 flex items-start gap-1.5 text-[11px] text-amber-400/80">
+          <ArrowCounterClockwise size={11} className="shrink-0 mt-0.5" />
+          <span className="line-clamp-2">{a.retryReason}</span>
+        </div>
+      )}
+      {/* Live thinking */}
+      {hasLiveThinking && (
+        <div className="mt-1.5">
+          <div className="flex items-center gap-1.5 text-[11px] text-indigo-400/70 mb-1">
+            <Brain size={11} className="animate-pulse" />
+            <span>Thinking...</span>
+          </div>
+          <pre className="text-[10px] text-indigo-300/50 whitespace-pre-wrap font-mono overflow-hidden max-h-20 bg-indigo-950/15 rounded-lg p-2 border border-indigo-500/10">
+            {a.thinking.slice(-500)}
+          </pre>
+        </div>
+      )}
+      {/* Live steps */}
+      {hasLiveSteps && (
+        <div className="mt-1.5 space-y-0.5">
+          {a.steps.slice(-3).map((step, i) => (
+            <div key={i} className="flex items-center gap-1.5 text-[10px] text-slate-500">
+              <Wrench size={10} className="shrink-0" />
+              <span className="truncate">
+                {step.tool_name ? `${step.tool_name}()` : step.step_type || "step"}
+              </span>
+            </div>
+          ))}
+        </div>
+      )}
       {hasReasoning && (
         <button
           onClick={() => setShowReasoning((s) => !s)}

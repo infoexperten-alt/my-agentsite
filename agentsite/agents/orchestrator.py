@@ -21,6 +21,7 @@ def create_pipeline(
     max_review_iterations: int | None = None,
     review_threshold: int | None = None,
     agent_configs: dict[str, AgentConfig] | None = None,
+    deps: Any = None,
 ) -> AsyncSequentialGroup:
     """Build the full generation pipeline (static — all 4 agents).
 
@@ -52,6 +53,12 @@ def create_pipeline(
     developer = create_developer_agent_auto(_agent_model("developer", effective_model, agent_configs))
     reviewer = create_reviewer_agent_auto(_agent_model("reviewer", effective_model, agent_configs))
 
+    # Apply temperature and system prompt overrides from configs
+    _apply_agent_overrides(pm, "pm", agent_configs)
+    _apply_agent_overrides(designer, "designer", agent_configs)
+    _apply_agent_overrides(developer, "developer", agent_configs)
+    _apply_agent_overrides(reviewer, "reviewer", agent_configs)
+
     # Build+Review loop: exit when approved or max iterations reached
     def _exit_condition(state: dict[str, Any], iteration: int) -> bool:
         feedback_text = state.get("review_feedback", "")
@@ -69,6 +76,8 @@ def create_pipeline(
                 "Build the website page based on this plan:\n\n"
                 "Site Plan: {site_plan}\n\n"
                 "Style Spec: {style_spec}\n\n"
+                "Project Design Guide: {design_system_guide}\n"
+                "Architecture Guide: {architecture_guide}\n\n"
                 "Logo URL: {logo_url}\n"
                 "Icon URL: {icon_url}\n\n"
                 "Previous review feedback (if any): {review_feedback}\n\n"
@@ -80,6 +89,8 @@ def create_pipeline(
                 "Review the generated website code.\n\n"
                 "Site Plan: {site_plan}\n"
                 "Style Spec: {style_spec}\n"
+                "Project Design Guide: {design_system_guide}\n"
+                "Architecture Guide: {architecture_guide}\n"
                 "Developer output: {page_output}\n\n"
                 "IMPORTANT: First call the list_files tool to discover what files were generated, "
                 "then use read_file to inspect each one. "
@@ -89,6 +100,7 @@ def create_pipeline(
         exit_condition=_exit_condition,
         max_iterations=max_iters,
         callbacks=callbacks,
+        deps=deps,
     )
 
     # Full pipeline
@@ -106,6 +118,7 @@ def create_pipeline(
             build_review_loop,
         ],
         callbacks=callbacks,
+        deps=deps,
     )
 
     return pipeline
@@ -120,6 +133,8 @@ def create_dynamic_pipeline(
     review_threshold: int | None = None,
     agent_configs: dict[str, AgentConfig] | None = None,
     error_policy: Any = None,
+    deps: Any = None,
+    max_total_cost: float | None = None,
 ) -> AsyncSequentialGroup:
     """Build a dynamic pipeline based on PM's required_agents output.
 
@@ -143,6 +158,7 @@ def create_dynamic_pipeline(
     # Designer (optional) - use auto factory for capability detection
     if "designer" in required_agents:
         designer = create_designer_agent_auto(_agent_model("designer", effective_model, agent_configs))
+        _apply_agent_overrides(designer, "designer", agent_configs)
         steps.append(
             (
                 designer,
@@ -156,10 +172,12 @@ def create_dynamic_pipeline(
 
     # Developer (always required) - use auto factory for capability detection
     developer = create_developer_agent_auto(_agent_model("developer", effective_model, agent_configs))
+    _apply_agent_overrides(developer, "developer", agent_configs)
 
     if "reviewer" in required_agents:
         # Use auto factory for capability detection
         reviewer = create_reviewer_agent_auto(_agent_model("reviewer", effective_model, agent_configs))
+        _apply_agent_overrides(reviewer, "reviewer", agent_configs)
 
         def _exit_condition(state: dict[str, Any], iteration: int) -> bool:
             feedback_text = state.get("review_feedback", "")
@@ -178,6 +196,8 @@ def create_dynamic_pipeline(
                     "Build the website page based on this plan:\n\n"
                     "Site Plan: {site_plan}\n\n"
                     "Style Spec: {style_spec}\n\n"
+                    "Project Design Guide: {design_system_guide}\n"
+                    "Architecture Guide: {architecture_guide}\n\n"
                     "Logo URL: {logo_url}\n"
                     "Icon URL: {icon_url}\n\n"
                     "Previous review feedback (if any): {review_feedback}\n\n"
@@ -189,6 +209,8 @@ def create_dynamic_pipeline(
                     "Review the generated website code.\n\n"
                     "Site Plan: {site_plan}\n"
                     "Style Spec: {style_spec}\n"
+                    "Project Design Guide: {design_system_guide}\n"
+                    "Architecture Guide: {architecture_guide}\n"
                     "Developer output: {page_output}\n\n"
                     "IMPORTANT: First call the list_files tool to discover what files were generated, "
                     "then use read_file to inspect each one. "
@@ -198,6 +220,8 @@ def create_dynamic_pipeline(
             exit_condition=_exit_condition,
             max_iterations=max_iters,
             callbacks=callbacks,
+            deps=deps,
+            max_total_cost=max_total_cost,
         )
         steps.append(build_review_loop)
     else:
@@ -210,6 +234,8 @@ def create_dynamic_pipeline(
                 "Build the website page based on this plan:\n\n"
                 "Site Plan: {site_plan}\n\n"
                 "Style Spec: {style_spec}\n\n"
+                "Project Design Guide: {design_system_guide}\n"
+                "Architecture Guide: {architecture_guide}\n\n"
                 "Logo URL: {logo_url}\n"
                 "Icon URL: {icon_url}\n\n"
                 "Use the write_file tool to save each file. Generate complete, "
@@ -217,10 +243,38 @@ def create_dynamic_pipeline(
             )
         )
 
-    kwargs: dict[str, Any] = {"callbacks": callbacks}
+    kwargs: dict[str, Any] = {"callbacks": callbacks, "deps": deps}
     if error_policy is not None:
         kwargs["error_policy"] = error_policy
+    if max_total_cost is not None:
+        kwargs["max_total_cost"] = max_total_cost
     return AsyncSequentialGroup(steps, **kwargs)
+
+
+def _apply_agent_overrides(
+    agent: Any,
+    agent_key: str,
+    configs: dict[str, AgentConfig] | None,
+) -> None:
+    """Apply temperature and system_prompt_override from AgentConfig to a created agent.
+
+    Model is already handled by ``_agent_model()`` at agent creation time.
+    This function applies the remaining override fields (temperature and
+    system_prompt_override) to the agent instance after it has been created.
+    """
+    if not configs or agent_key not in configs:
+        return
+    cfg = configs[agent_key]
+
+    # Apply temperature via agent options
+    if cfg.temperature is not None:
+        if not hasattr(agent, "options") or agent.options is None:
+            agent.options = {}
+        agent.options["temperature"] = cfg.temperature
+
+    # Apply system prompt override (replaces the default persona)
+    if cfg.system_prompt_override:
+        agent.system_prompt = cfg.system_prompt_override
 
 
 def _agent_model(

@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import asyncio
-import json
 import sys
 
 import click
@@ -27,6 +26,9 @@ def serve(host: str | None, port: int | None, reload: bool):
     import uvicorn
 
     settings.ensure_dirs()
+    from .config import init_prompture
+
+    init_prompture()
     uvicorn.run(
         "agentsite.api.app:create_app",
         factory=True,
@@ -49,11 +51,13 @@ def generate(prompt: str, model: str | None, output: str | None, name: str | Non
     """
     from pathlib import Path
 
+    from .config import init_prompture
     from .engine.pipeline import GenerationPipeline
     from .engine.project_manager import ProjectManager
     from .models import Project
 
     settings.ensure_dirs()
+    init_prompture()
 
     effective_model = model or settings.default_model
     project_name = name or prompt[:50].strip()

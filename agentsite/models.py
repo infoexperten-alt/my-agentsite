@@ -171,6 +171,11 @@ class Project(BaseModel):
     logo_url: str = Field(default="")
     icon_url: str = Field(default="")
     style_spec: StyleSpec | None = Field(default=None)
+    agent_overrides: dict | None = Field(
+        default=None,
+        description="Per-project agent overrides keyed by agent name (pm, designer, developer, reviewer). "
+        "Each value is a dict with optional keys: model, temperature, system_prompt_override.",
+    )
     created_at: str = Field(default_factory=lambda: datetime.now(timezone.utc).isoformat())
     updated_at: str = Field(default_factory=lambda: datetime.now(timezone.utc).isoformat())
 
