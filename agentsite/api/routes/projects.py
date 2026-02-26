@@ -5,6 +5,7 @@ from __future__ import annotations
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 
+from ...agents.registry import AgentRegistry
 from ...models import ChatMessage, Page, Project, StyleSpec
 from ..deps import get_message_repo, get_page_repo, get_pm, get_repo, get_version_repo
 
@@ -26,6 +27,7 @@ class UpdateProjectRequest(BaseModel):
     logo_url: str | None = None
     icon_url: str | None = None
     style_spec: dict | None = None
+    agent_overrides: dict | None = None
 
 
 class CreatePageRequest(BaseModel):
@@ -38,7 +40,7 @@ class CreatePageRequest(BaseModel):
 
 @router.post("", response_model=Project)
 async def create_project(req: CreateProjectRequest, repo=Depends(get_repo), pm=Depends(get_pm)):
-    project = Project(name=req.name, description=req.description, model=req.model)
+    project = Project(name=req.name, description=req.description, model=req.model, style_spec=StyleSpec())
     pm.create(project)
     await repo.create(project)
     return project
@@ -74,6 +76,18 @@ async def update_project(project_id: str, req: UpdateProjectRequest, repo=Depend
         project.icon_url = req.icon_url
     if req.style_spec is not None:
         project.style_spec = StyleSpec.model_validate(req.style_spec)
+    if req.agent_overrides is not None:
+        # Validate: only registered agent keys, only known fields per agent
+        valid_agents = {d.key for d in AgentRegistry.list_all()}
+        valid_fields = {"model", "temperature", "system_prompt_override"}
+        cleaned = {}
+        for agent_key, overrides in req.agent_overrides.items():
+            if agent_key not in valid_agents or not isinstance(overrides, dict):
+                continue
+            agent_clean = {k: v for k, v in overrides.items() if k in valid_fields}
+            if agent_clean:
+                cleaned[agent_key] = agent_clean
+        project.agent_overrides = cleaned or None
     await repo.update(project)
     return project
 
@@ -103,6 +117,23 @@ async def export_zip(project_id: str, pm=Depends(get_pm)):
         media_type="application/zip",
         headers={"Content-Disposition": f"attachment; filename={project_id}.zip"},
     )
+
+
+# -- Guides (project knowledge base) --
+
+@router.get("/{project_id}/guides")
+async def list_guides(project_id: str, repo=Depends(get_repo), pm=Depends(get_pm)):
+    project = await repo.get(project_id)
+    if project is None:
+        raise HTTPException(status_code=404, detail="Project not found")
+
+    guide_files = pm.list_guides(project_id)
+    guides: dict[str, str] = {}
+    for filename in guide_files:
+        content = pm.read_guide(project_id, filename)
+        if content is not None:
+            guides[filename] = content
+    return guides
 
 
 # -- Page CRUD --

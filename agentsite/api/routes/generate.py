@@ -20,6 +20,7 @@ router = APIRouter(tags=["generate"])
 class GenerateRequest(BaseModel):
     prompt: str = ""
     model: str = ""
+    agent_models: dict[str, str] | None = None
 
 
 @router.post("/api/projects/{project_id}/pages/{slug}/generate")
@@ -83,6 +84,34 @@ async def start_generation(
     configs_list = await agent_config_repo.list_all()
     agent_configs = {c.agent_name: c for c in configs_list}
 
+    # Merge project-level agent overrides (enabled, model, temperature, system_prompt_override)
+    if project.agent_overrides:
+        from ...models import AgentConfig as AgentConfigModel
+        for agent_key, overrides in project.agent_overrides.items():
+            if not isinstance(overrides, dict):
+                continue
+            if agent_key not in agent_configs:
+                agent_configs[agent_key] = AgentConfigModel(agent_name=agent_key)
+            cfg = agent_configs[agent_key]
+            if "enabled" in overrides:
+                cfg.enabled = bool(overrides["enabled"])
+            if overrides.get("model") and "/" in overrides["model"]:
+                cfg.model = overrides["model"]
+            if "temperature" in overrides:
+                cfg.temperature = float(overrides["temperature"])
+            if overrides.get("system_prompt_override"):
+                cfg.system_prompt_override = overrides["system_prompt_override"]
+
+    # Merge request-level per-agent model overrides (highest priority)
+    if req.agent_models:
+        from ...models import AgentConfig as AgentConfigModel
+        for agent_key, model_str in req.agent_models.items():
+            if model_str and "/" in model_str:
+                if agent_key in agent_configs:
+                    agent_configs[agent_key].model = model_str
+                else:
+                    agent_configs[agent_key] = AgentConfigModel(agent_name=agent_key, model=model_str)
+
     # Build pipeline
     pipeline = GenerationPipeline(pm, on_event=on_event, agent_configs=agent_configs)
 
@@ -94,6 +123,21 @@ async def start_generation(
                 version_number=version_number,
                 page_prompt=prompt,
             )
+            # Auto-save designer's StyleSpec back to the project
+            if pipeline.style_spec_text:
+                try:
+                    import json as _json
+
+                    from prompture import clean_json_text
+
+                    from ...models import StyleSpec
+                    cleaned_ss = clean_json_text(pipeline.style_spec_text)
+                    ss_data = _json.loads(cleaned_ss)
+                    project.style_spec = StyleSpec.model_validate(ss_data)
+                    await repo.update(project)
+                except Exception:
+                    logger.warning("Failed to auto-save StyleSpec to project", exc_info=True)
+
             # Read generated files from disk into version record
             file_list = pm.list_version_files(project.id, slug, version_number)
             files_content: dict[str, str] = {}

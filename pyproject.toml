@@ -15,7 +15,7 @@ classifiers = [
     "Operating System :: OS Independent",
 ]
 dependencies = [
-    "prompture>=1.0.8",
+    "prompture[all]>=1.0.45",
     "fastapi>=0.100",
     "uvicorn[standard]>=0.20",
     "aiosqlite>=0.19",
@@ -29,6 +29,7 @@ dependencies = [
 [project.optional-dependencies]
 test = ["pytest>=7.0", "pytest-asyncio>=0.23.0", "httpx>=0.25.0"]
 dev = ["pytest>=7.0", "pytest-asyncio>=0.23.0", "httpx>=0.25.0", "ruff>=0.8.0"]
+scss = ["libsass>=0.23"]
 
 [project.scripts]
 agentsite = "agentsite.cli:cli"

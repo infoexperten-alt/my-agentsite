@@ -14,7 +14,7 @@ import ZoomControls from "../components/builder/ZoomControls";
 
 export default function PageBuilderPage() {
   const { projectId, slug } = useParams();
-  const { project, pages } = useProject(projectId);
+  const { project, pages, refresh: refreshProject } = useProject(projectId);
   const { versions, refresh: refreshVersions } = useVersions(projectId, slug);
   const { models } = useApp();
   const gen = useGeneration(projectId);
@@ -74,6 +74,11 @@ export default function PageBuilderPage() {
     gen.onVersionRefresh(refreshVersions);
   }, [gen, refreshVersions]);
 
+  // Wire generation to project refresh (brand data auto-updates after generation)
+  useEffect(() => {
+    gen.onProjectRefresh(refreshProject);
+  }, [gen, refreshProject]);
+
   // Detect generation completion: refresh preview and auto-select new version
   useEffect(() => {
     if (prevGenerating.current && !gen.generating) {
@@ -123,7 +128,18 @@ export default function PageBuilderPage() {
   };
 
   const getAgentLabel = useCallback((name) => {
-    return name.charAt(0).toUpperCase() + name.slice(1);
+    const labels = {
+      pm: "PM",
+      designer: "Designer",
+      developer: "Developer",
+      reviewer: "Reviewer",
+      markup: "Markup",
+      style: "Style",
+      style_scss: "SCSS",
+      script: "Script",
+      image: "Image",
+    };
+    return labels[name] || name.charAt(0).toUpperCase() + name.slice(1);
   }, []);
 
   // Maintain a single agent-progress message that updates as events arrive
@@ -133,7 +149,7 @@ export default function PageBuilderPage() {
     const agentEntries = Object.entries(gen.agents);
     if (agentEntries.length === 0 && !gen.pipelineAgents) return;
 
-    const CANONICAL_ORDER = ["pm", "designer", "developer", "reviewer"];
+    const CANONICAL_ORDER = ["pm", "designer", "image", "developer", "markup", "style", "style_scss", "script", "reviewer"];
     const pipelineSet = gen.pipelineAgents || agentEntries.map(([name]) => name);
     const knownAgents = CANONICAL_ORDER.filter((k) => pipelineSet.includes(k));
     const agentsList = knownAgents.map((name) => {
@@ -151,6 +167,10 @@ export default function PageBuilderPage() {
         tool_calls_count: agentData.tool_calls_count || 0,
         model: agentData.model || "",
         reasoning: agentData.reasoning || "",
+        thinking: agentData.thinking || "",
+        steps: agentData.steps || [],
+        iteration: agentData.iteration || 0,
+        retryReason: agentData.retryReason || "",
       };
     });
 
@@ -207,9 +227,6 @@ export default function PageBuilderPage() {
         versions={versions}
         activeVersion={activeVersion}
         onVersionChange={setActiveVersion}
-        generating={gen.generating}
-        agents={gen.agents}
-        pipelineAgents={gen.pipelineAgents}
         viewMode={viewMode}
         onViewModeChange={setViewMode}
       />

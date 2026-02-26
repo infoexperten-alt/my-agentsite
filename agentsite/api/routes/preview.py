@@ -18,6 +18,7 @@ router = APIRouter(prefix="/preview", tags=["preview"])
 _MIME_TYPES = {
     ".html": "text/html",
     ".css": "text/css",
+    ".scss": "text/x-scss",
     ".js": "application/javascript",
     ".json": "application/json",
     ".svg": "image/svg+xml",
@@ -46,6 +47,26 @@ def _find_latest_version(pm, project_id: str, slug: str) -> int | None:
             except ValueError:
                 continue
     return max(versions) if versions else None
+
+
+@router.get("/{project_id}/assets/{filename:path}")
+async def preview_asset(project_id: str, filename: str, pm=Depends(get_pm)):
+    """Serve an asset file from the project assets directory."""
+    assets_dir = pm.assets_dir(project_id)
+    target = assets_dir / filename
+
+    # Prevent path traversal
+    try:
+        target.resolve().relative_to(assets_dir.resolve())
+    except ValueError:
+        raise HTTPException(status_code=403, detail="Access denied") from None
+
+    if not target.exists() or not target.is_file():
+        raise HTTPException(status_code=404, detail=f"Asset not found: {filename}")
+
+    suffix = target.suffix.lower()
+    media_type = _MIME_TYPES.get(suffix, "application/octet-stream")
+    return FileResponse(target, media_type=media_type)
 
 
 @router.get("/{project_id}/{slug}")
@@ -114,6 +135,24 @@ async def _serve_version_file(pm, project_id: str, slug: str, version: int, path
         suffix = target.suffix.lower()
         media_type = _MIME_TYPES.get(suffix, "application/octet-stream")
         return FileResponse(target, media_type=media_type)
+
+    # SCSS fallback: if requesting .css but only .scss exists, compile on-the-fly
+    if target.suffix.lower() == ".css":
+        scss_path = target.with_suffix(".scss")
+        if scss_path.exists() and scss_path.is_file():
+            try:
+                from ...engine.scss_compiler import compile_scss
+
+                scss_source = scss_path.read_text(encoding="utf-8")
+                css_content = compile_scss(scss_source)
+                # Cache the compiled CSS to disk for future requests
+                target.write_text(css_content, encoding="utf-8")
+                logger.info("Compiled SCSS on-the-fly: %s -> %s", scss_path.name, target.name)
+                return Response(content=css_content, media_type="text/css")
+            except ImportError:
+                logger.warning("SCSS file found but libsass not installed: %s", scss_path)
+            except Exception:
+                logger.warning("Failed to compile SCSS on-the-fly: %s", scss_path, exc_info=True)
 
     # File not on disk — try DB fallback
     if version_repo and page_repo:

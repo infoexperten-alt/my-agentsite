@@ -1,12 +1,17 @@
-"""Agent tools for filesystem operations and image analysis."""
+"""Agent tools for filesystem operations, image generation, and asset management."""
 
 from __future__ import annotations
 
 import json
+import logging
+import os
+import uuid
 from pathlib import Path
-from typing import Any
 
-from prompture import RunContext
+import httpx
+from prompture import RunContext, ToolRegistry
+
+logger = logging.getLogger("agentsite.tools")
 
 
 def write_file(ctx: RunContext, path: str, content: str) -> str:
@@ -73,3 +78,288 @@ def list_files(ctx: RunContext) -> str:
         return "No files generated yet."
 
     return json.dumps(files, indent=2)
+
+
+# ---------------------------------------------------------------------------
+# Guide tools (project knowledge base)
+# ---------------------------------------------------------------------------
+
+_ALLOWED_GUIDE_FILENAMES = {
+    "design-system.md",
+    "style.json",
+    "architecture.md",
+    "component-guide.md",
+    "site-plan.json",
+    "asset-manifest.md",
+    "copy-guide.md",
+    "seo-config.md",
+    "accessibility-report.md",
+    "animation-guide.md",
+}
+
+
+def write_guide(ctx: RunContext, filename: str, content: str) -> str:
+    """Write a guide file to the project knowledge base.
+
+    Guides persist across generations so agents can build on prior knowledge.
+
+    Args:
+        filename: One of: design-system.md, style.json, architecture.md, component-guide.md
+        content: Guide content to write.
+    """
+    if filename not in _ALLOWED_GUIDE_FILENAMES:
+        return f"Error: filename must be one of {sorted(_ALLOWED_GUIDE_FILENAMES)}"
+
+    project_dir: Path = ctx.deps["project_dir"]
+    guides_dir = project_dir / "guides"
+    guides_dir.mkdir(parents=True, exist_ok=True)
+    target = guides_dir / filename
+
+    # Prevent path traversal
+    try:
+        target.resolve().relative_to(guides_dir.resolve())
+    except ValueError:
+        return f"Error: path '{filename}' escapes guides directory"
+
+    target.write_text(content, encoding="utf-8")
+    return f"Guide written: {filename} ({len(content)} bytes)"
+
+
+def read_guide(ctx: RunContext, filename: str) -> str:
+    """Read a guide file from the project knowledge base.
+
+    Args:
+        filename: Guide filename to read.
+    """
+    project_dir: Path = ctx.deps["project_dir"]
+    guides_dir = project_dir / "guides"
+    target = guides_dir / filename
+
+    try:
+        target.resolve().relative_to(guides_dir.resolve())
+    except ValueError:
+        return f"Error: path '{filename}' escapes guides directory"
+
+    if not target.exists():
+        return f"Guide '{filename}' not found. Available guides: {list_guides(ctx)}"
+
+    return target.read_text(encoding="utf-8")
+
+
+def list_guides(ctx: RunContext) -> str:
+    """List all guide files in the project knowledge base."""
+    project_dir: Path = ctx.deps["project_dir"]
+    guides_dir = project_dir / "guides"
+
+    if not guides_dir.exists():
+        return "No guides yet."
+
+    files = sorted(f.name for f in guides_dir.iterdir() if f.is_file())
+    if not files:
+        return "No guides yet."
+
+    return json.dumps(files, indent=2)
+
+
+# ---------------------------------------------------------------------------
+# Image generation and library tools
+# ---------------------------------------------------------------------------
+
+_ALLOWED_IMAGE_EXTENSIONS = {".png", ".jpg", ".jpeg", ".webp"}
+
+
+def generate_image(ctx: RunContext, prompt: str, filename: str) -> str:
+    """Generate an image using AI and save it to the project library.
+
+    Args:
+        prompt: Description of the image to generate.
+        filename: Filename for the image (e.g. hero-bg.png, team-photo.jpg).
+    """
+    assets_dir: Path | None = ctx.deps.get("assets_dir")
+    project_id: str | None = ctx.deps.get("project_id")
+
+    if not assets_dir or not project_id:
+        return "Error: assets_dir or project_id not available in context"
+
+    ext = Path(filename).suffix.lower()
+    if ext not in _ALLOWED_IMAGE_EXTENSIONS:
+        return f"Error: extension '{ext}' not allowed. Use one of: {sorted(_ALLOWED_IMAGE_EXTENSIONS)}"
+
+    api_key = os.environ.get("OPENAI_API_KEY", "")
+    if not api_key:
+        return "Error: OPENAI_API_KEY not set — cannot generate images"
+
+    try:
+        resp = httpx.post(
+            "https://api.openai.com/v1/images/generations",
+            headers={"Authorization": f"Bearer {api_key}"},
+            json={
+                "model": "dall-e-3",
+                "prompt": prompt,
+                "n": 1,
+                "size": "1024x1024",
+                "response_format": "url",
+            },
+            timeout=60,
+        )
+        resp.raise_for_status()
+        image_url = resp.json()["data"][0]["url"]
+
+        # Download the image bytes
+        img_resp = httpx.get(image_url, timeout=30)
+        img_resp.raise_for_status()
+        img_data = img_resp.content
+    except Exception as exc:
+        logger.warning("Image generation failed: %s", exc)
+        return f"Error generating image: {exc}"
+
+    # Save with UUID prefix for uniqueness
+    asset_id = uuid.uuid4().hex[:8]
+    stem = Path(filename).stem
+    safe_name = f"{asset_id}-{stem}{ext}"
+
+    assets_dir.mkdir(parents=True, exist_ok=True)
+    target = assets_dir / safe_name
+    target.write_bytes(img_data)
+
+    logger.info("Generated image saved: %s (%d bytes)", safe_name, len(img_data))
+
+    # Fire callback for WebSocket event
+    on_asset_created = ctx.deps.get("on_asset_created")
+    if on_asset_created:
+        on_asset_created(safe_name)
+
+    return f"assets/{safe_name}"
+
+
+def list_library(ctx: RunContext) -> str:
+    """List all images and assets available in the project library."""
+    assets_dir: Path | None = ctx.deps.get("assets_dir")
+    project_id: str | None = ctx.deps.get("project_id")
+
+    if not assets_dir or not project_id:
+        return "Error: assets_dir or project_id not available in context"
+
+    if not assets_dir.exists():
+        return json.dumps({"assets": [], "message": "Library is empty"})
+
+    assets = []
+    for f in sorted(assets_dir.iterdir()):
+        if f.is_file():
+            assets.append({
+                "filename": f.name,
+                "path": f"assets/{f.name}",
+                "size": f.stat().st_size,
+            })
+
+    return json.dumps({"assets": assets, "count": len(assets)})
+
+
+# ---------------------------------------------------------------------------
+# Shared tool registries
+# ---------------------------------------------------------------------------
+
+registry = ToolRegistry()
+registry.register(write_file)
+registry.register(read_file)
+registry.register(list_files)
+
+# Designer: guide tools only (no file write/read for site files)
+designer_tools = ToolRegistry()
+designer_tools.register(write_guide)
+designer_tools.register(read_guide)
+designer_tools.register(list_guides)
+
+# Developer: all file tools + guide tools + image generation
+dev_tools = ToolRegistry()
+dev_tools.register(write_file)
+dev_tools.register(read_file)
+dev_tools.register(list_files)
+dev_tools.register(read_guide)
+dev_tools.register(write_guide)
+dev_tools.register(list_guides)
+dev_tools.register(generate_image)
+dev_tools.register(list_library)
+
+# Reviewer: read-only file tools + read-only guide tools
+reviewer_tools = ToolRegistry()
+reviewer_tools.register(read_file)
+reviewer_tools.register(list_files)
+reviewer_tools.register(read_guide)
+reviewer_tools.register(list_guides)
+
+# ---------------------------------------------------------------------------
+# Specialist agent tool registries
+# ---------------------------------------------------------------------------
+
+# Markup: write/read files + guides + library (for image paths)
+markup_tools = ToolRegistry()
+markup_tools.register(write_file)
+markup_tools.register(read_file)
+markup_tools.register(list_files)
+markup_tools.register(read_guide)
+markup_tools.register(list_guides)
+markup_tools.register(list_library)
+
+# Style: write/read files + guides (reads design tokens)
+style_tools = ToolRegistry()
+style_tools.register(write_file)
+style_tools.register(read_file)
+style_tools.register(read_guide)
+style_tools.register(list_guides)
+
+# Script: write/read files + guides (reads architecture for DOM structure)
+script_tools = ToolRegistry()
+script_tools.register(write_file)
+script_tools.register(read_file)
+script_tools.register(list_files)
+script_tools.register(read_guide)
+script_tools.register(list_guides)
+
+# Image: generate images + library management + guides
+image_tools = ToolRegistry()
+image_tools.register(generate_image)
+image_tools.register(list_library)
+image_tools.register(write_guide)
+image_tools.register(read_guide)
+image_tools.register(list_guides)
+
+# ---------------------------------------------------------------------------
+# Post-processing agent tool registries
+# ---------------------------------------------------------------------------
+
+# Copywriter: read/write files + guides
+copywriter_tools = ToolRegistry()
+copywriter_tools.register(write_file)
+copywriter_tools.register(read_file)
+copywriter_tools.register(list_files)
+copywriter_tools.register(read_guide)
+copywriter_tools.register(write_guide)
+copywriter_tools.register(list_guides)
+
+# SEO: read/write files + guides
+seo_tools = ToolRegistry()
+seo_tools.register(write_file)
+seo_tools.register(read_file)
+seo_tools.register(list_files)
+seo_tools.register(read_guide)
+seo_tools.register(write_guide)
+seo_tools.register(list_guides)
+
+# Accessibility: read/write files + guides
+accessibility_tools = ToolRegistry()
+accessibility_tools.register(write_file)
+accessibility_tools.register(read_file)
+accessibility_tools.register(list_files)
+accessibility_tools.register(read_guide)
+accessibility_tools.register(write_guide)
+accessibility_tools.register(list_guides)
+
+# Animation: read/write files + guides
+animation_tools = ToolRegistry()
+animation_tools.register(write_file)
+animation_tools.register(read_file)
+animation_tools.register(list_files)
+animation_tools.register(read_guide)
+animation_tools.register(write_guide)
+animation_tools.register(list_guides)

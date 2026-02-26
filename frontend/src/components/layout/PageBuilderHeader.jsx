@@ -7,7 +7,6 @@ import {
 } from "@phosphor-icons/react";
 import DeviceSwitcher from "../builder/DeviceSwitcher";
 import VersionSelector from "../builder/VersionSelector";
-import ProgressPipeline from "../builder/ProgressPipeline";
 import { getExportUrl } from "../../api/assets";
 
 export default function PageBuilderHeader({
@@ -18,9 +17,6 @@ export default function PageBuilderHeader({
   versions,
   activeVersion,
   onVersionChange,
-  generating,
-  agents,
-  pipelineAgents,
   viewMode,
   onViewModeChange,
 }) {
@@ -50,10 +46,6 @@ export default function PageBuilderHeader({
             active={activeVersion}
             onChange={onVersionChange}
           />
-        )}
-
-        {generating && (
-          <ProgressPipeline agents={agents} pipelineAgents={pipelineAgents} />
         )}
 
         {/* Preview / Code toggle */}

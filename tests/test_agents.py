@@ -153,20 +153,28 @@ class TestAutoFactories:
 
 
 class TestPlainAgents:
+    @staticmethod
+    def _get_system_prompt_text(agent):
+        """Extract system prompt text regardless of whether it's a string or Persona."""
+        sp = agent._system_prompt
+        if hasattr(sp, "system_prompt"):
+            return sp.system_prompt
+        return str(sp)
+
     def test_pm_plain_has_json_in_prompt(self):
         agent = create_pm_agent_plain("openai/gpt-4o")
-        assert "JSON" in agent._system_prompt
+        assert "JSON" in self._get_system_prompt_text(agent)
 
     def test_designer_plain_has_json_in_prompt(self):
         agent = create_designer_agent_plain("openai/gpt-4o")
-        assert "JSON" in agent._system_prompt
+        assert "JSON" in self._get_system_prompt_text(agent)
 
     def test_developer_plain_has_no_tools(self):
         agent = create_developer_agent_plain("openai/gpt-4o")
         assert len(agent._tools.definitions) == 0
-        assert "```html" in agent._system_prompt
+        assert "```html" in self._get_system_prompt_text(agent)
 
     def test_reviewer_plain_has_no_tools(self):
         agent = create_reviewer_agent_plain("openai/gpt-4o")
         assert len(agent._tools.definitions) == 0
-        assert "JSON" in agent._system_prompt
+        assert "JSON" in self._get_system_prompt_text(agent)

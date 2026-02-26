@@ -10,7 +10,7 @@
 [![Deploy to Heroku](https://www.herokucdn.com/deploy/button.svg)](https://heroku.com/deploy?template=https://github.com/jhd3197/AgentSite)
 [![Deploy to Render](https://render.com/images/deploy-to-render-button.svg)](https://render.com/deploy?repo=https://github.com/jhd3197/AgentSite)
 
-An AI-powered website builder that uses multi-agent orchestration to generate complete, production-ready websites from a single text prompt.
+An AI-powered website builder that uses multi-agent orchestration to generate complete, production-ready websites from a single text prompt. Nine specialized agents — four core and five specialists — collaborate to plan, design, build, and review your site.
 
 **PyPI Package:** [pypi.org/project/agentsite](https://pypi.org/project/agentsite/)
 
@@ -20,7 +20,7 @@ An AI-powered website builder that uses multi-agent orchestration to generate co
 
 Most AI website builders give you a single LLM call that dumps out a generic template. The result is usually a wall of code with no real structure, inconsistent styling, and no quality checks. You end up spending more time fixing the output than you saved by generating it.
 
-AgentSite takes a different approach: **four specialized AI agents collaborate in a pipeline**, each handling what they're best at. A PM agent plans the site structure. A Designer agent defines the visual system. A Developer agent writes the actual code. A Reviewer agent evaluates quality and can send work back for revision — just like a real team would.
+AgentSite takes a different approach: **nine specialized AI agents collaborate in a pipeline**, each handling what they're best at. A PM agent plans the site structure and selects the build strategy. A Designer agent defines the visual system. In monolithic mode, a single Developer agent writes all the code; in specialist mode, dedicated Markup, Style, Script, and Image agents work in parallel for faster builds. A Reviewer agent evaluates quality and can send work back for revision — just like a real team would.
 
 The entire pipeline is **model-agnostic**. You can use OpenAI, Claude, Google, Groq, Ollama, LM Studio, or any provider supported by [Prompture](https://pypi.org/project/prompture/). Swap models without changing anything else.
 
@@ -73,19 +73,42 @@ agentsite serve
 
 ## How It Works
 
+AgentSite supports two build modes, chosen automatically by the PM agent based on site complexity:
+
+**Monolithic mode** — a single Developer agent handles all code:
+
 ```
-Prompt --> PM Agent --> Designer Agent --> Developer Agent <--> Reviewer Agent --> Website
-          (plan)       (style)            (code)               (QA)
+Prompt --> PM --> Designer --> Developer <--> Reviewer --> Website
 ```
+
+**Specialist mode** — dedicated agents work in parallel for faster builds:
+
+```
+Prompt --> PM --> Designer --> Image -----> Reviewer --> Website
+                              Markup --/
+                              Style --/
+                              Script -/
+```
+
+### Core Agents
 
 | Agent | Role | Output |
 | --- | --- | --- |
-| **PM** | Analyzes the prompt, plans site structure and page hierarchy | `SitePlan` |
+| **PM** | Analyzes the prompt, plans site structure, selects build strategy and agents | `SitePlan` |
 | **Designer** | Defines colors, typography, spacing, and the visual system | `StyleSpec` |
-| **Developer** | Writes semantic HTML, CSS, and vanilla JS for each page | `PageOutput` |
+| **Developer** | Writes semantic HTML, CSS, and vanilla JS for each page (monolithic mode) | `PageOutput` |
 | **Reviewer** | Evaluates quality, accessibility, and correctness (score >= 7 = approved) | `ReviewFeedback` |
 
-The Reviewer can trigger revision loops, sending feedback back to the Developer until quality meets the approval threshold. This runs up to two iterations per page.
+### Specialist Agents
+
+| Agent | Role | Output |
+| --- | --- | --- |
+| **Markup** | Writes HTML/JSX markup with semantic structure and ARIA labels | `MarkupOutput` |
+| **Style** | Writes CSS or SCSS stylesheets with custom properties and responsive design | `StyleOutput` |
+| **Script** | Writes vanilla JavaScript for interactivity and animations | `ScriptOutput` |
+| **Image** | Generates images and manages the asset library | `ImageOutput` |
+
+The Reviewer can trigger revision loops, sending feedback back to the Developer or specialists until quality meets the approval threshold. This runs up to two iterations per page.
 
 ---
 
@@ -93,7 +116,7 @@ The Reviewer can trigger revision loops, sending feedback back to the Developer 
 
 ### Multi-Agent Pipeline
 
-Four agents with distinct personas coordinate through [Prompture](https://pypi.org/project/prompture/) groups. Each agent has a focused role and structured output — no single monolithic prompt trying to do everything.
+Nine agents with distinct personas coordinate through [Prompture](https://pypi.org/project/prompture/) groups. Four core agents handle planning, design, development, and QA. Five specialist agents (Markup, Style, SCSS, Script, Image) can run in parallel for faster builds. Each agent has a focused role and structured output — no single monolithic prompt trying to do everything.
 
 ### Real-Time Progress
 
@@ -176,8 +199,10 @@ Provider API keys (`OPENAI_API_KEY`, `CLAUDE_API_KEY`, `GOOGLE_API_KEY`, etc.) a
 ```
 agentsite/
   agents/            # Agent factories, Prompture personas, orchestration
-    personas.py      # PM, Designer, Developer, Reviewer persona definitions
-    orchestrator.py  # Pipeline wiring and group configuration
+    personas.py      # All agent persona definitions (core + specialists)
+    orchestrator.py  # Pipeline wiring, dynamic mode selection, parallel groups
+    registry.py      # Centralized agent registry with auto-discovery
+    specialists/     # Specialist agents (markup, style, script, image)
   api/               # FastAPI application
     routes/          # REST endpoints (projects, generate, models, assets, preview)
     websocket.py     # WebSocket manager for real-time progress

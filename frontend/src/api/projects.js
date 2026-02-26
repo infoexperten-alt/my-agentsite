@@ -44,3 +44,6 @@ export const createMessage = (projectId, slug, data) =>
     method: "POST",
     body: JSON.stringify(data),
   });
+
+export const fetchGuides = (projectId) =>
+  fetchJSON(`/api/projects/${projectId}/guides`);

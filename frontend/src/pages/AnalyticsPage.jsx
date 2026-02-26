@@ -4,6 +4,8 @@ import {
   Lightning,
   ChartBar,
   DownloadSimple,
+  CalendarBlank,
+  Clock,
 } from "@phosphor-icons/react";
 import MetricCard from "../components/analytics/MetricCard";
 import TokenChart from "../components/analytics/TokenChart";
@@ -77,11 +79,23 @@ export default function AnalyticsPage() {
       <div className="p-8">
         <div className="max-w-7xl mx-auto space-y-6">
           {/* KPI row */}
-          <div className="grid grid-cols-1 md:grid-cols-4 gap-6">
+          <div className="grid grid-cols-1 md:grid-cols-3 lg:grid-cols-6 gap-6">
             <MetricCard
               label="Total Spend (Est.)"
               value={loading ? "—" : formatCost(stats?.total_cost)}
               icon={CurrencyDollar}
+            />
+            <MetricCard
+              label="Today"
+              value={loading ? "—" : formatCost(stats?.cost_today)}
+              icon={Clock}
+              sub="Spend today"
+            />
+            <MetricCard
+              label="This Month"
+              value={loading ? "—" : formatCost(stats?.cost_this_month)}
+              icon={CalendarBlank}
+              sub="Spend this month"
             />
             <MetricCard
               label="Total Tokens"

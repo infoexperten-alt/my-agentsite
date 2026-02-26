@@ -2,11 +2,14 @@
 
 from __future__ import annotations
 
+import json
+
 from prompture import AsyncAgent as Agent
 
 from ..engine.capabilities import supports_structured_output
 from ..models import StyleSpec
 from .personas import DESIGNER_PERSONA
+from .tools import designer_tools
 
 
 def create_designer_agent_auto(model: str) -> Agent:
@@ -26,6 +29,7 @@ def create_designer_agent(model: str) -> Agent:
         model,
         system_prompt=DESIGNER_PERSONA,
         output_type=StyleSpec,
+        tools=designer_tools,
         name="designer",
         description="Defines visual design system (colors, fonts, spacing)",
         output_key="style_spec",
@@ -42,12 +46,12 @@ def create_designer_agent_plain(model: str) -> Agent:
     json_schema = StyleSpec.model_json_schema()
     return Agent(
         model,
-        system_prompt=(
-            DESIGNER_PERSONA.system_prompt
-            + "\n\nIMPORTANT: You MUST respond with ONLY a valid JSON object matching this schema:\n"
-            + f"```json\n{__import__('json').dumps(json_schema, indent=2)}\n```\n"
+        system_prompt=DESIGNER_PERSONA.extend(
+            "IMPORTANT: You MUST respond with ONLY a valid JSON object matching this schema:\n"
+            f"```json\n{json.dumps(json_schema, indent=2)}\n```\n"
             "Do NOT include any text before or after the JSON. Return ONLY the JSON object."
         ),
+        tools=designer_tools,
         name="designer",
         description="Defines visual design system (plain text mode)",
         output_key="style_spec",

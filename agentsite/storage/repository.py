@@ -19,14 +19,15 @@ class ProjectRepository:
     async def create(self, project: Project) -> Project:
         """Insert a new project."""
         await self._db.conn.execute(
-            """INSERT INTO projects (id, name, description, model, style_spec, created_at, updated_at)
-               VALUES (?, ?, ?, ?, ?, ?, ?)""",
+            """INSERT INTO projects (id, name, description, model, style_spec, agent_overrides, created_at, updated_at)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
             (
                 project.id,
                 project.name,
                 project.description,
                 project.model,
                 project.style_spec.model_dump_json() if project.style_spec else None,
+                json.dumps(project.agent_overrides) if project.agent_overrides else None,
                 project.created_at,
                 project.updated_at,
             ),
@@ -53,12 +54,13 @@ class ProjectRepository:
         project.updated_at = datetime.now(timezone.utc).isoformat()
         await self._db.conn.execute(
             """UPDATE projects SET name=?, description=?, model=?, style_spec=?,
-               updated_at=? WHERE id=?""",
+               agent_overrides=?, updated_at=? WHERE id=?""",
             (
                 project.name,
                 project.description,
                 project.model,
                 project.style_spec.model_dump_json() if project.style_spec else None,
+                json.dumps(project.agent_overrides) if project.agent_overrides else None,
                 project.updated_at,
                 project.id,
             ),
@@ -77,12 +79,21 @@ class ProjectRepository:
         if row["style_spec"]:
             style_spec = StyleSpec.model_validate_json(row["style_spec"])
 
+        agent_overrides = None
+        try:
+            raw = row["agent_overrides"]
+            if raw:
+                agent_overrides = json.loads(raw)
+        except (KeyError, IndexError):
+            pass  # column may not exist in old DBs before migration runs
+
         return Project(
             id=row["id"],
             name=row["name"],
             description=row["description"],
             model=row["model"],
             style_spec=style_spec,
+            agent_overrides=agent_overrides,
             created_at=row["created_at"],
             updated_at=row["updated_at"],
         )
@@ -373,12 +384,15 @@ class AgentConfigRepository:
 
     @staticmethod
     def _row_to_config(row: Any) -> AgentConfig:
+        # category column may not exist in older DBs before migration runs
+        row_keys = row.keys() if hasattr(row, "keys") else []
         return AgentConfig(
             agent_name=row["agent_name"],
             enabled=bool(row["enabled"]),
             model=row["model"],
             temperature=row["temperature"],
             system_prompt_override=row["system_prompt_override"],
+            category=row["category"] if "category" in row_keys else "",
             updated_at=row["updated_at"],
         )
 
@@ -394,8 +408,9 @@ class AgentRunRepository:
         await self._db.conn.execute(
             """INSERT INTO agent_runs
                (id, project_id, page_slug, version, agent_name, status,
-                started_at, completed_at, input_tokens, output_tokens, cost, output_summary)
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                started_at, completed_at, input_tokens, output_tokens, cost,
+                session_id, output_summary)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
             (
                 run.id,
                 run.project_id,
@@ -408,6 +423,7 @@ class AgentRunRepository:
                 run.input_tokens,
                 run.output_tokens,
                 run.cost,
+                run.session_id,
                 json.dumps(run.output_summary),
             ),
         )
@@ -544,16 +560,22 @@ class AgentRunRepository:
             return 0
 
         try:
-            from prompture.drivers import get_driver_for_model
+            from prompture.infra import get_model_rates
 
             updated = 0
             for row in rows:
                 model_str = row["model"] or ""
-                provider = model_str.split("/")[0] if "/" in model_str else ""
-                model_id = model_str.split("/", 1)[1] if "/" in model_str else model_str
                 try:
-                    drv = get_driver_for_model(model_str)
-                    cost = drv._calculate_cost(provider, model_id, row["input_tokens"], row["output_tokens"])
+                    provider = model_str.split("/")[0] if "/" in model_str else ""
+                    model_id = model_str.split("/", 1)[1] if "/" in model_str else model_str
+                    rates = get_model_rates(provider, model_id)
+                    if rates and "input" in rates and "output" in rates:
+                        cost = (
+                            (row["input_tokens"] / 1_000_000) * rates["input"]
+                            + (row["output_tokens"] / 1_000_000) * rates["output"]
+                        )
+                    else:
+                        cost = 0.0
                 except Exception:
                     cost = 0.0
                 if cost > 0:
@@ -581,5 +603,6 @@ class AgentRunRepository:
             input_tokens=row["input_tokens"],
             output_tokens=row["output_tokens"],
             cost=row["cost"],
+            session_id=row["session_id"] if "session_id" in row else "",
             output_summary=json.loads(row["output_summary"]) if row["output_summary"] else {},
         )

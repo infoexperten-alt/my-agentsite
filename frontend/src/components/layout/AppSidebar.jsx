@@ -1,5 +1,5 @@
 import { NavLink } from "react-router-dom";
-import { SquaresFour, Users, ChartLineUp, Key, Gear, Sparkle, Brain, GithubLogo } from "@phosphor-icons/react";
+import { SquaresFour, Users, ChartLineUp, Key, Gear, Sparkle, Brain, GithubLogo, Robot, ArrowUpRight } from "@phosphor-icons/react";
 
 const navItems = [
   { to: "/", icon: SquaresFour, label: "Projects" },
@@ -71,7 +71,22 @@ export default function AppSidebar() {
         </nav>
       </div>
 
-      <div className="p-4 border-t border-slate-800/50">
+      <div className="p-4 border-t border-slate-800/50 space-y-3">
+        <a
+          href="https://github.com/jhd3197/CachiBot"
+          target="_blank"
+          rel="noopener noreferrer"
+          className="block p-3 rounded-lg bg-gradient-to-br from-brand-500/10 to-purple-600/10 border border-brand-500/15 hover:border-brand-500/30 transition-all group"
+        >
+          <div className="flex items-center gap-2 mb-1.5">
+            <Robot size={16} weight="fill" className="text-brand-400" />
+            <span className="text-xs font-semibold text-brand-400">CachiBot</span>
+            <ArrowUpRight size={12} className="text-brand-400/50 ml-auto group-hover:text-brand-400 transition-colors" />
+          </div>
+          <p className="text-[11px] leading-relaxed text-slate-400">
+            Enjoying AgentSite? You'll love CachiBot — AI-powered multi-agent orchestration taken further.
+          </p>
+        </a>
         <a
           href="https://github.com/jhd3197/AgentSite"
           target="_blank"

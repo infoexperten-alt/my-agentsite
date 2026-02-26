@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import json
+
 from prompture import AsyncAgent as Agent
 
 from ..engine.capabilities import supports_structured_output
@@ -42,10 +44,9 @@ def create_pm_agent_plain(model: str) -> Agent:
     json_schema = SitePlan.model_json_schema()
     return Agent(
         model,
-        system_prompt=(
-            PM_PERSONA.system_prompt
-            + "\n\nIMPORTANT: You MUST respond with ONLY a valid JSON object matching this schema:\n"
-            + f"```json\n{__import__('json').dumps(json_schema, indent=2)}\n```\n"
+        system_prompt=PM_PERSONA.extend(
+            "IMPORTANT: You MUST respond with ONLY a valid JSON object matching this schema:\n"
+            f"```json\n{json.dumps(json_schema, indent=2)}\n```\n"
             "Do NOT include any text before or after the JSON. Return ONLY the JSON object."
         ),
         name="pm",

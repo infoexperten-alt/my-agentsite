@@ -6,7 +6,7 @@ from prompture import AsyncAgent as Agent
 
 from ..engine.capabilities import supports_tools
 from .personas import DEVELOPER_PERSONA
-from .tools import list_files, read_file, write_file
+from .tools import dev_tools
 
 
 def create_developer_agent_auto(model: str) -> Agent:
@@ -32,11 +32,11 @@ def create_developer_agent(model: str) -> Agent:
     return Agent(
         model,
         system_prompt=DEVELOPER_PERSONA,
-        tools=[write_file, read_file, list_files],
+        tools=dev_tools,
         name="developer",
         description="Generates HTML/CSS/JS files for each page",
         output_key="page_output",
-        options={"max_tokens": 16384, "timeout": 900},
+        options={"max_tokens": 65536, "timeout": 900},
     )
 
 
@@ -78,5 +78,5 @@ def create_developer_agent_plain(model: str) -> Agent:
         name="developer",
         description="Generates HTML/CSS/JS files for each page (plain text mode)",
         output_key="page_output",
-        options={"max_tokens": 16384, "timeout": 900},
+        options={"max_tokens": 65536, "timeout": 900},
     )

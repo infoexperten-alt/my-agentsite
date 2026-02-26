@@ -6,10 +6,14 @@ export default function useGeneration(projectId) {
   const [generating, setGenerating] = useState(false);
   const [agents, setAgents] = useState({});
   const [files, setFiles] = useState([]);
+  const [generatedAssets, setGeneratedAssets] = useState([]);
   const [error, setError] = useState(null);
   const [pipelineAgents, setPipelineAgents] = useState(null);
+  const [agentMeta, setAgentMeta] = useState(null);
+  const [parallelGroups, setParallelGroups] = useState(null);
   const ws = useWebSocket(projectId);
   const versionRefreshRef = useRef(null);
+  const projectRefreshRef = useRef(null);
 
   useEffect(() => {
     const unsubs = [
@@ -45,16 +49,51 @@ export default function useGeneration(projectId) {
             ...prev[msg.agent],
             status: "retrying",
             error: msg.data?.message,
+            retryReason: msg.data?.message || "Unknown error",
+          },
+        }));
+      }),
+      ws.on("agent_thinking", (msg) => {
+        setAgents((prev) => ({
+          ...prev,
+          [msg.agent]: {
+            ...prev[msg.agent],
+            thinking: msg.data?.text || "",
+          },
+        }));
+      }),
+      ws.on("agent_step", (msg) => {
+        setAgents((prev) => {
+          const existing = prev[msg.agent] || {};
+          const steps = [...(existing.steps || []), msg.data].slice(-10);
+          return { ...prev, [msg.agent]: { ...existing, steps } };
+        });
+      }),
+      ws.on("agent_iteration", (msg) => {
+        setAgents((prev) => ({
+          ...prev,
+          [msg.agent]: {
+            ...prev[msg.agent],
+            iteration: msg.data?.iteration || 0,
           },
         }));
       }),
       ws.on("file_written", (msg) => {
         setFiles((prev) => [...prev, msg.data]);
       }),
+      ws.on("asset_created", (msg) => {
+        setGeneratedAssets((prev) => [...prev, msg.data]);
+      }),
       ws.on("pipeline_plan", (msg) => {
         const agents = msg.data?.required_agents;
         if (agents && agents.length > 0) {
           setPipelineAgents(agents);
+        }
+        if (msg.data?.agent_meta) {
+          setAgentMeta(msg.data.agent_meta);
+        }
+        if (msg.data?.parallel_groups) {
+          setParallelGroups(msg.data.parallel_groups);
         }
       }),
       ws.on("generation_complete", (msg) => {
@@ -69,6 +108,7 @@ export default function useGeneration(projectId) {
         }
         ws.disconnect();
         versionRefreshRef.current?.();
+        projectRefreshRef.current?.();
       }),
       ws.on("error", (msg) => {
         setError((prev) => {
@@ -90,8 +130,11 @@ export default function useGeneration(projectId) {
       setGenerating(true);
       setAgents({});
       setFiles([]);
+      setGeneratedAssets([]);
       setError(null);
       setPipelineAgents(null);
+      setAgentMeta(null);
+      setParallelGroups(null);
       ws.connect();
       try {
         await startGeneration(projectId, slug, data);
@@ -108,5 +151,9 @@ export default function useGeneration(projectId) {
     versionRefreshRef.current = fn;
   }, []);
 
-  return { generating, agents, files, error, pipelineAgents, start, onVersionRefresh };
+  const onProjectRefresh = useCallback((fn) => {
+    projectRefreshRef.current = fn;
+  }, []);
+
+  return { generating, agents, files, generatedAssets, error, pipelineAgents, agentMeta, parallelGroups, start, onVersionRefresh, onProjectRefresh };
 }

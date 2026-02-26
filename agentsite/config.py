@@ -26,6 +26,12 @@ class Settings(BaseSettings):
     max_review_iterations: int = 2
     review_approval_threshold: int = 7
 
+    # Budget enforcement (0 = no limit)
+    max_generation_cost: float = 0.0
+
+    # Response caching
+    cache_enabled: bool = False
+
     @property
     def projects_dir(self) -> Path:
         return self.data_dir / "projects"
@@ -41,3 +47,18 @@ class Settings(BaseSettings):
 
 
 settings = Settings()
+
+
+def init_prompture() -> None:
+    """Initialize Prompture global configuration (tracker + cache).
+
+    Called once at app startup (CLI or server).
+    """
+    from prompture import configure_tracker
+
+    configure_tracker(enabled=True, db_path=str(settings.data_dir / "usage.db"))
+
+    if settings.cache_enabled:
+        from prompture import configure_cache
+
+        configure_cache(backend="sqlite", ttl=3600, db_path=str(settings.data_dir / "cache.db"))

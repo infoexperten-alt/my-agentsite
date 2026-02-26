@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import io
-import json
 import shutil
 import zipfile
 from pathlib import Path
@@ -138,6 +137,47 @@ class ProjectManager:
         return sorted(
             str(f.relative_to(vdir)).replace("\\", "/") for f in vdir.rglob("*") if f.is_file()
         )
+
+    # -- Guides (project knowledge base) --
+
+    def guides_dir(self, project_id: str) -> Path:
+        """Return the guides directory for a project."""
+        return self.project_dir(project_id) / "guides"
+
+    def write_guide(self, project_id: str, filename: str, content: str) -> None:
+        """Write a guide file, with path-traversal protection."""
+        gdir = self.guides_dir(project_id)
+        gdir.mkdir(parents=True, exist_ok=True)
+        target = gdir / filename
+
+        # Prevent path traversal
+        try:
+            target.resolve().relative_to(gdir.resolve())
+        except ValueError:
+            raise ValueError(f"Path traversal denied: {filename}")
+
+        target.write_text(content, encoding="utf-8")
+
+    def read_guide(self, project_id: str, filename: str) -> str | None:
+        """Read a guide file, or None if it doesn't exist."""
+        gdir = self.guides_dir(project_id)
+        target = gdir / filename
+
+        try:
+            target.resolve().relative_to(gdir.resolve())
+        except ValueError:
+            return None
+
+        if not target.exists():
+            return None
+        return target.read_text(encoding="utf-8")
+
+    def list_guides(self, project_id: str) -> list[str]:
+        """List all guide filenames for a project."""
+        gdir = self.guides_dir(project_id)
+        if not gdir.exists():
+            return []
+        return sorted(f.name for f in gdir.iterdir() if f.is_file())
 
     # -- Export --
 

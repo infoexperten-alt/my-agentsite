@@ -22,6 +22,14 @@ class UpdateAgentRequest(BaseModel):
     system_prompt_override: str | None = None
 
 
+@router.get("/catalog")
+async def get_catalog():
+    """Return the full agent catalog with metadata for all registered agents."""
+    from agentsite.agents.registry import AgentRegistry
+
+    return AgentRegistry.to_catalog()
+
+
 @router.get("", response_model=list[AgentConfig])
 async def list_agents(repo=Depends(get_agent_config_repo)):
     """List all agent configurations."""
@@ -68,8 +76,35 @@ async def get_agent_stats(
     since: str | None = None,
     repo=Depends(get_agent_run_repo),
 ):
-    """Get aggregated agent statistics."""
-    return await repo.get_stats(since=since)
+    """Get aggregated agent statistics, enriched with tracker data when available."""
+    stats = await repo.get_stats(since=since)
+    # Enrich with Prompture ledger data (additive fields)
+    try:
+        from prompture.infra.ledger import ModelUsageLedger
+
+        ledger = ModelUsageLedger()
+        all_stats = ledger.get_all_stats()
+        cost_by_model = {
+            s["model_name"]: round(s["total_cost"], 4)
+            for s in all_stats
+            if s.get("model_name") and s.get("total_cost", 0) > 0
+        }
+        stats["cost_by_model"] = cost_by_model
+
+        # Compute cost_today and cost_this_month from agent_runs table
+        from datetime import datetime, timezone
+
+        now = datetime.now(timezone.utc)
+        today_start = now.replace(hour=0, minute=0, second=0, microsecond=0).isoformat()
+        month_start = now.replace(day=1, hour=0, minute=0, second=0, microsecond=0).isoformat()
+
+        today_stats = await repo.get_stats(since=today_start)
+        month_stats = await repo.get_stats(since=month_start)
+        stats["cost_today"] = today_stats.get("total_cost", 0.0)
+        stats["cost_this_month"] = month_stats.get("total_cost", 0.0)
+    except Exception:
+        pass
+    return stats
 
 
 @router.get("/stats/daily")
@@ -79,6 +114,99 @@ async def get_daily_stats(
 ):
     """Get daily token aggregates for the last N days."""
     return await repo.get_daily_stats(days=days)
+
+
+@router.get("/stats/models")
+async def get_model_stats():
+    """Get cost breakdown by model from Prompture's ModelUsageLedger."""
+    try:
+        from prompture.infra.ledger import ModelUsageLedger
+
+        ledger = ModelUsageLedger()
+        all_stats = ledger.get_all_stats()
+        cost_by_model = {
+            s["model_name"]: {
+                "total_cost": round(s["total_cost"], 4),
+                "use_count": s["use_count"],
+                "total_tokens": s["total_tokens"],
+            }
+            for s in all_stats
+            if s.get("model_name")
+        }
+        return {"cost_by_model": cost_by_model}
+    except ImportError:
+        return {"cost_by_model": {}}
+    except Exception as exc:
+        logger.warning("Failed to get model stats from ledger: %s", exc)
+        return {"cost_by_model": {}}
+
+
+@router.get("/stats/providers")
+async def get_provider_stats():
+    """Get cost breakdown by provider from Prompture's ModelUsageLedger."""
+    try:
+        from prompture.infra.ledger import ModelUsageLedger
+
+        ledger = ModelUsageLedger()
+        all_stats = ledger.get_all_stats()
+        # Group by provider prefix (e.g. "openai/gpt-4o" -> "openai")
+        cost_by_provider: dict[str, float] = {}
+        for s in all_stats:
+            model_name = s.get("model_name", "")
+            provider = model_name.split("/")[0] if "/" in model_name else model_name
+            if provider:
+                cost_by_provider[provider] = round(
+                    cost_by_provider.get(provider, 0.0) + (s.get("total_cost", 0.0)),
+                    4,
+                )
+        return {"cost_by_provider": cost_by_provider}
+    except ImportError:
+        return {"cost_by_provider": {}}
+    except Exception as exc:
+        logger.warning("Failed to get provider stats from ledger: %s", exc)
+        return {"cost_by_provider": {}}
+
+
+@router.get("/stats/today")
+async def get_today_stats(repo=Depends(get_agent_run_repo)):
+    """Get today and this month cost totals from agent runs."""
+    try:
+        from datetime import datetime, timezone
+
+        now = datetime.now(timezone.utc)
+        today_start = now.replace(hour=0, minute=0, second=0, microsecond=0).isoformat()
+        month_start = now.replace(day=1, hour=0, minute=0, second=0, microsecond=0).isoformat()
+
+        today_stats = await repo.get_stats(since=today_start)
+        month_stats = await repo.get_stats(since=month_start)
+        return {
+            "cost_today": today_stats.get("total_cost", 0.0),
+            "cost_this_month": month_stats.get("total_cost", 0.0),
+        }
+    except Exception as exc:
+        logger.warning("Failed to get today stats: %s", exc)
+        return {"cost_today": 0.0, "cost_this_month": 0.0}
+
+
+@router.get("/stats/session/{session_id}")
+async def get_session_stats(session_id: str, repo=Depends(get_agent_run_repo)):
+    """Get usage summary for a specific generation session from agent runs."""
+    runs = await repo.list_recent(limit=100)
+    session_runs = [r for r in runs if r.session_id == session_id]
+    if not session_runs:
+        raise HTTPException(status_code=404, detail=f"No runs found for session '{session_id}'")
+
+    total_input = sum(r.input_tokens for r in session_runs)
+    total_output = sum(r.output_tokens for r in session_runs)
+    total_cost = sum(r.cost for r in session_runs)
+    return {
+        "session_id": session_id,
+        "total_tokens": total_input + total_output,
+        "input_tokens": total_input,
+        "output_tokens": total_output,
+        "total_cost": round(total_cost, 4),
+        "agents": [r.agent_name for r in session_runs],
+    }
 
 
 @router.post("/runs/backfill-costs")

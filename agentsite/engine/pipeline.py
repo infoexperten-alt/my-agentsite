@@ -10,20 +10,22 @@ from collections.abc import Callable
 from datetime import datetime, timezone
 from typing import Any
 
-from prompture import AsyncSequentialGroup, GroupCallbacks, GroupResult
-from prompture.group_types import ErrorPolicy
+from prompture import AsyncSequentialGroup, ErrorPolicy, GroupCallbacks, GroupResult
 
-from ..agents.orchestrator import _agent_model, create_dynamic_pipeline
+from ..agents.orchestrator import (
+    _agent_model,
+    _apply_agent_overrides,
+    create_dynamic_pipeline,
+    create_specialist_pipeline,
+)
 from ..config import settings
-from ..models import AgentConfig, AgentRun, PageOutput, Project, SitePlan, StyleSpec, WSEvent
-from .gemini_patch import apply_gemini_patch
+from ..models import AgentConfig, AgentRun, PageOutput, Project, SitePlan, StyleSpec, TechStack, WSEvent
 from .project_manager import ProjectManager
 from .reasoning_patch import apply_reasoning_patch
 
 logger = logging.getLogger("agentsite.pipeline")
 
 # Apply patches at import time
-apply_gemini_patch()
 apply_reasoning_patch()
 
 
@@ -34,6 +36,15 @@ def _agent_name_to_key(name: str) -> str:
         "agentsite_designer": "designer",
         "agentsite_developer": "developer",
         "agentsite_reviewer": "reviewer",
+        "agentsite_markup": "markup",
+        "agentsite_style": "style",
+        "agentsite_style_scss": "style_scss",
+        "agentsite_script": "script",
+        "agentsite_image": "image",
+        "agentsite_copywriter": "copywriter",
+        "agentsite_seo": "seo",
+        "agentsite_accessibility": "accessibility",
+        "agentsite_animation": "animation",
     }
     return _NAME_MAP.get(name, name)
 
@@ -59,29 +70,26 @@ def _attach_streaming_callbacks(group: Any, emit_fn: Any) -> None:
             async def _on_tool_end(name: str, result: Any, *, _key: str = agent_key) -> None:
                 await emit_fn("tool_end", agent=_key, data={"name": name, "result": str(result)[:500]})
 
+            async def _on_thinking(text: str, *, _key: str = agent_key) -> None:
+                await emit_fn("agent_thinking", agent=_key, data={"text": text[:2000]})
+
+            async def _on_step(step: Any, *, _key: str = agent_key) -> None:
+                await emit_fn("agent_step", agent=_key, data={
+                    "step_type": step.step_type.value if hasattr(step.step_type, "value") else str(step.step_type),
+                    "content": (step.content or "")[:500],
+                    "tool_name": getattr(step, "tool_name", None),
+                })
+
+            async def _on_iteration(idx: int, *, _key: str = agent_key) -> None:
+                await emit_fn("agent_iteration", agent=_key, data={"iteration": idx})
+
             agent.callbacks = AgentCallbacks(
                 on_tool_start=_on_tool_start,
                 on_tool_end=_on_tool_end,
+                on_thinking=_on_thinking,
+                on_step=_on_step,
+                on_iteration=_on_iteration,
             )
-
-
-def _patch_pipeline_deps(group: Any, deps: Any) -> None:
-    """Monkey-patch every agent in a group so ``deps`` is always forwarded.
-
-    ``SequentialGroup.run()`` and ``LoopGroup.run()`` call
-    ``agent.run(prompt)`` without passing ``deps``, which means tools
-    that rely on ``RunContext.deps`` receive ``None``.  This helper
-    walks the group tree and wraps each agent's ``run`` method so that
-    ``deps`` is injected automatically.
-    """
-    agents = getattr(group, "_agents", [])
-    for item in agents:
-        agent = item[0] if isinstance(item, tuple) else item
-        # Recurse into nested groups (LoopGroup inside SequentialGroup)
-        if hasattr(agent, "_agents"):
-            _patch_pipeline_deps(agent, deps)
-        else:
-            _wrap_agent_run(agent, deps)
 
 
 def _merge_nested_group_state(group: Any) -> None:
@@ -104,16 +112,6 @@ def _merge_nested_group_state(group: Any) -> None:
             # Merge child state into parent (child always wins)
             for k, v in agent.shared_state.items():
                 group._state[k] = v
-
-
-def _wrap_agent_run(agent: Any, deps: Any) -> None:
-    original_run = agent.run
-
-    async def _patched_run(prompt: str, **kwargs: Any) -> Any:
-        kwargs.setdefault("deps", deps)
-        return await original_run(prompt, **kwargs)
-
-    agent.run = _patched_run
 
 
 class GenerationPipeline:
@@ -139,6 +137,8 @@ class GenerationPipeline:
         self._developer_output_text: str = ""  # direct capture from callback
         self._developer_tool_calls: list[dict] = []  # tool calls from developer agent
         self._agent_models: dict[str, str] = {}  # agent_key -> resolved model name
+        self.site_plan_text: str = ""  # raw PM output for guide persistence
+        self.style_spec_text: str = ""  # raw Designer output for project persistence
 
     async def _emit(self, event_type: str, agent: str = "", data: dict[str, Any] | None = None) -> None:
         """Fire a WebSocket event if a callback is registered."""
@@ -186,6 +186,17 @@ class GenerationPipeline:
             except RuntimeError:
                 pass  # No event loop in thread context — file_written events are nice-to-have
 
+        def _on_asset_created(filename: str) -> None:
+            try:
+                loop = asyncio.get_running_loop()
+                task = loop.create_task(
+                    self._emit("asset_created", data={"filename": filename})
+                )
+                _background_tasks.append(task)
+                task.add_done_callback(_background_tasks.remove)
+            except RuntimeError:
+                pass
+
         async def _on_agent_start(name: str, prompt: str) -> None:
             agent_key = _agent_name_to_key(name)
             started_at = datetime.now(timezone.utc).isoformat()
@@ -197,6 +208,7 @@ class GenerationPipeline:
                 version=version_number,
                 agent_name=agent_key,
                 status="running",
+                session_id=session_id,
             )
             self._active_runs[name] = run
             self._run_start_times[name] = time.monotonic()
@@ -237,12 +249,15 @@ class GenerationPipeline:
                         or 0.0
                     )
 
-            # Capture developer output directly for fallback extraction
-            if agent_key == "developer":
-                self._developer_output_text = output_text
-                self._developer_tool_calls = tool_calls
+            # Capture developer/specialist output for fallback extraction
+            _build_agents = {"developer", "markup", "style", "style_scss", "script"}
+            if agent_key in _build_agents:
+                if agent_key == "developer":
+                    self._developer_output_text = output_text
+                    self._developer_tool_calls = tool_calls
                 logger.info(
-                    "Developer agent completed: output_text length=%d, tool_calls=%d, output_text[:200]=%s",
+                    "%s agent completed: output_text length=%d, tool_calls=%d, output_text[:200]=%s",
+                    agent_key,
                     len(output_text),
                     len(tool_calls),
                     repr(output_text[:200]),
@@ -312,23 +327,36 @@ class GenerationPipeline:
         async def _on_state_update(key: str, value: Any) -> None:
             await self._emit("state_update", data={"key": key, "value_preview": str(value)[:200]})
 
+        async def _on_round_start(round_number: int) -> None:
+            await self._emit("round_start", data={"round": round_number})
+
+        async def _on_round_complete(round_number: int) -> None:
+            await self._emit("round_complete", data={"round": round_number})
+
         # Build group callbacks that bridge to WS events
         group_callbacks = GroupCallbacks(
             on_agent_start=_on_agent_start,
             on_agent_complete=_on_agent_complete,
             on_agent_error=_on_agent_error,
             on_state_update=_on_state_update,
+            on_round_start=_on_round_start,
+            on_round_complete=_on_round_complete,
         )
 
         # Inject deps for tools (they read from RunContext.deps)
         deps = {
             "project_dir": self._pm.project_dir(project.id),
             "version_dir": version_dir,
+            "assets_dir": self._pm.assets_dir(project.id),
+            "project_id": project.id,
             "on_file_written": _on_file_written,
+            "on_asset_created": _on_asset_created,
             "written_files": written_files,
         }
 
         await self._emit("phase_start", data={"phase": "planning", "slug": slug, "version": version_number})
+
+        session_id = f"gen-{project.id}-{slug}-v{version_number}"
 
         try:
             # --- Resolve model for each agent and store for WS events ---
@@ -341,6 +369,7 @@ class GenerationPipeline:
             pm_model = self._agent_models["pm"]
             # Use auto factory to select structured/plain mode based on capabilities
             pm_agent = create_pm_agent_auto(pm_model)
+            _apply_agent_overrides(pm_agent, "pm", self._agent_configs)
 
             pm_callbacks = GroupCallbacks(
                 on_agent_start=_on_agent_start,
@@ -352,15 +381,24 @@ class GenerationPipeline:
                 callbacks=pm_callbacks,
                 state={"prompt": page_prompt},
                 error_policy=ErrorPolicy.raise_on_error,
+                deps=deps,
             )
-            _patch_pipeline_deps(pm_pipeline, deps)
             _attach_streaming_callbacks(pm_pipeline, self._emit)
 
             pm_result = await pm_pipeline.run(page_prompt)
             site_plan_text = pm_result.shared_state.get("site_plan", "")
+            self.site_plan_text = site_plan_text
 
-            # Parse required_agents from the PM output
+            # Persist site plan as a guide file for the Navigation page
+            if site_plan_text:
+                try:
+                    self._pm.write_guide(project.id, "site-plan.json", site_plan_text)
+                except Exception:
+                    logger.warning("Failed to write site-plan.json guide", exc_info=True)
+
+            # Parse required_agents and tech_stack from the PM output
             required_agents = ["designer", "developer", "reviewer"]  # default
+            tech_stack = TechStack()
             try:
                 from prompture import clean_json_text
 
@@ -368,15 +406,75 @@ class GenerationPipeline:
                 plan_data = json.loads(cleaned)
                 site_plan = SitePlan.model_validate(plan_data)
                 required_agents = site_plan.required_agents
-                # Ensure developer is always present
-                if "developer" not in required_agents:
+                tech_stack = site_plan.tech_stack
+                # Ensure at least one build agent is present
+                has_specialists = any(k in required_agents for k in ("markup", "style", "style_scss", "script"))
+                if not has_specialists and "developer" not in required_agents:
                     required_agents.append("developer")
             except Exception:
                 logger.debug("Could not parse required_agents from PM output, using all agents")
 
+            # Filter out agents that are disabled in agent configs (global or project-level)
+            if self._agent_configs:
+                disabled_agents = {
+                    key for key, cfg in self._agent_configs.items()
+                    if not cfg.enabled
+                }
+                if disabled_agents:
+                    before = list(required_agents)
+                    required_agents = [a for a in required_agents if a not in disabled_agents]
+                    removed = set(before) - set(required_agents)
+                    if removed:
+                        logger.info("Filtered out disabled agents: %s", removed)
+                    # Re-check: if specialist agents were disabled, fall back to developer (if enabled)
+                    has_specialists = any(k in required_agents for k in ("markup", "style", "style_scss", "script"))
+                    has_developer = "developer" in required_agents
+                    if not has_specialists and not has_developer:
+                        # All build agents disabled — add developer as fallback unless also disabled
+                        if "developer" not in disabled_agents:
+                            required_agents.append("developer")
+                            logger.info("Added developer agent as fallback (all specialists disabled)")
+                        else:
+                            logger.warning("All build agents are disabled — generation may fail")
+
             # Emit pipeline_plan event so frontend knows which agents will run
             all_agents = ["pm"] + [a for a in required_agents]
-            await self._emit("pipeline_plan", data={"required_agents": all_agents})
+
+            # Detect parallel groups for frontend visualization
+            specialist_keys = {"markup", "style", "style_scss", "script"}
+            parallel_agents = [k for k in required_agents if k in specialist_keys]
+            parallel_groups = [parallel_agents] if len(parallel_agents) > 1 else []
+
+            # Post-processing parallel group (seo, accessibility, animation)
+            post_process_parallel_keys = {"seo", "accessibility", "animation"}
+            post_parallel = [k for k in required_agents if k in post_process_parallel_keys]
+            if len(post_parallel) > 1:
+                parallel_groups.append(post_parallel)
+
+            # Build agent metadata from registry
+            from agentsite.agents.registry import AgentRegistry
+
+            agent_meta = {}
+            for key in all_agents:
+                desc = AgentRegistry.get(key)
+                if desc:
+                    agent_meta[key] = {
+                        "name": desc.name,
+                        "icon": desc.icon,
+                        "icon_color": desc.icon_color,
+                        "category": desc.category.value,
+                    }
+
+            await self._emit("pipeline_plan", data={
+                "required_agents": all_agents,
+                "agent_meta": agent_meta,
+                "parallel_groups": parallel_groups,
+                "tech_stack": tech_stack.model_dump(),
+            })
+
+            # --- Load existing guides for template injection ---
+            design_system_guide = self._pm.read_guide(project.id, "design-system.md") or ""
+            architecture_guide = self._pm.read_guide(project.id, "architecture.md") or ""
 
             # --- Phase B: Run Designer standalone (with fallback) if needed ---
             initial_state = {
@@ -388,6 +486,9 @@ class GenerationPipeline:
                 "icon_url": project.icon_url or "",
                 "page_slug": slug,
                 "page_title": slug.replace("-", " ").title(),
+                "design_system_guide": design_system_guide,
+                "architecture_guide": architecture_guide,
+                "tech_stack": tech_stack.model_dump_json(),
             }
 
             if "designer" in required_agents:
@@ -396,6 +497,7 @@ class GenerationPipeline:
                 designer_model = self._agent_models["designer"]
                 # Use auto factory to select structured/plain mode based on capabilities
                 designer_agent = create_designer_agent_auto(designer_model)
+                _apply_agent_overrides(designer_agent, "designer", self._agent_configs)
                 designer_prompt = (
                     "Design a visual style for this website:\n\n"
                     f"Site Plan: {site_plan_text}\n\n"
@@ -415,12 +517,13 @@ class GenerationPipeline:
                     callbacks=designer_callbacks,
                     state={"designer_prompt": designer_prompt},
                     error_policy=ErrorPolicy.raise_on_error,
+                    deps=deps,
                 )
-                _patch_pipeline_deps(designer_pipeline, deps)
                 _attach_streaming_callbacks(designer_pipeline, self._emit)
 
                 designer_result = await designer_pipeline.run(designer_prompt)
                 style_spec_text = designer_result.shared_state.get("style_spec", "")
+                self.style_spec_text = style_spec_text
 
                 initial_state["style_spec"] = style_spec_text
 
@@ -442,20 +545,42 @@ class GenerationPipeline:
                 else:
                     initial_state["style_spec"] = StyleSpec().model_dump_json()
 
-            # --- Phase C: Build dynamic pipeline for developer+reviewer ---
-            remaining_pipeline = create_dynamic_pipeline(
-                remaining_agents,
-                model,
-                callbacks=group_callbacks,
-                agent_configs=self._agent_configs,
-                error_policy=ErrorPolicy.raise_on_error,
-            )
+            # --- Phase C: Build pipeline — specialist (parallel) or legacy (monolithic) ---
+            max_cost = settings.max_generation_cost or None
+            specialist_keys = {"markup", "style", "style_scss", "script", "image"}
+            has_specialists = any(k in remaining_agents for k in specialist_keys)
+
+            # Resolve models for specialist and post-processing agents
+            all_specialist_keys = specialist_keys | {"copywriter", "seo", "accessibility", "animation"}
+            for agent_key in all_specialist_keys:
+                if agent_key in remaining_agents:
+                    self._agent_models[agent_key] = _agent_model(agent_key, model, self._agent_configs)
+
+            if has_specialists:
+                remaining_pipeline = create_specialist_pipeline(
+                    remaining_agents,
+                    model,
+                    callbacks=group_callbacks,
+                    agent_configs=self._agent_configs,
+                    error_policy=ErrorPolicy.raise_on_error,
+                    deps=deps,
+                    max_total_cost=max_cost,
+                )
+            else:
+                remaining_pipeline = create_dynamic_pipeline(
+                    remaining_agents,
+                    model,
+                    callbacks=group_callbacks,
+                    agent_configs=self._agent_configs,
+                    error_policy=ErrorPolicy.raise_on_error,
+                    deps=deps,
+                    max_total_cost=max_cost,
+                )
 
             # Transfer state from PM phase and propagate to nested groups
             # (LoopGroup) so prompt templates like {site_plan} resolve.
             remaining_pipeline.inject_state(initial_state, recursive=True)
 
-            _patch_pipeline_deps(remaining_pipeline, deps)
             _attach_streaming_callbacks(remaining_pipeline, self._emit)
 
             _need_dev_fallback = False
@@ -529,8 +654,8 @@ class GenerationPipeline:
                     callbacks=dev_callbacks,
                     state={"dev_prompt": dev_prompt},
                     error_policy=ErrorPolicy.raise_on_error,
+                    deps=deps,
                 )
-                _patch_pipeline_deps(dev_pipeline_plain, deps)
                 _attach_streaming_callbacks(dev_pipeline_plain, self._emit)
                 plain_result = await dev_pipeline_plain.run(dev_prompt)
 
@@ -543,8 +668,12 @@ class GenerationPipeline:
                             result.aggregate_usage[k] = result.aggregate_usage.get(k, 0) + v
                 result = plain_result
 
-            # Merge usage from both phases
-            combined_usage = pm_result.aggregate_usage.copy() if hasattr(pm_result, "aggregate_usage") else {}
+            # Build combined_usage by merging both pipeline phases.
+            # The global tracker (configure_tracker) captures usage
+            # automatically for analytics; here we aggregate per-generation.
+            combined_usage: dict[str, Any] = (
+                pm_result.aggregate_usage.copy() if hasattr(pm_result, "aggregate_usage") else {}
+            )
             if hasattr(result, "aggregate_usage"):
                 for k, v in result.aggregate_usage.items():
                     if isinstance(v, (int, float)):
@@ -583,6 +712,16 @@ class GenerationPipeline:
                 )
                 if page_output_text:
                     self._write_files_from_output(project.id, slug, version_number, page_output_text)
+
+            # Post-generation: compile SCSS files if present
+            try:
+                from .scss_compiler import compile_directory
+
+                scss_count = compile_directory(version_dir)
+                if scss_count:
+                    logger.info("Compiled %d SCSS files to CSS", scss_count)
+            except ImportError:
+                pass  # libsass not installed — no SCSS compilation
 
             # Verify files actually exist on disk
             final_files = self._pm.list_version_files(project.id, slug, version_number)
@@ -668,6 +807,9 @@ class GenerationPipeline:
                 },
             )
             raise
+
+        finally:
+            pass
 
     def _write_files_from_tool_calls(self, project_id: str, slug: str, version: int, tool_calls: list[dict]) -> None:
         """Extract files from write_file tool call arguments and write them to disk."""

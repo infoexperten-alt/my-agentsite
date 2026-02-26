@@ -16,6 +16,14 @@ from pydantic import BaseModel, Field
 # ------------------------------------------------------------------
 
 
+class TechStack(BaseModel):
+    """Technology choices for a website build, decided by the PM agent."""
+
+    markup: str = Field(default="html", description="Markup format: 'html' or 'jsx'")
+    styling: str = Field(default="css", description="Styling format: 'css' or 'scss'")
+    framework: str = Field(default="vanilla", description="Framework: 'vanilla' or 'react'")
+
+
 class PagePlan(BaseModel):
     """Plan for a single page within a site."""
 
@@ -35,14 +43,31 @@ class SitePlan(BaseModel):
         default_factory=lambda: ["navbar", "footer"],
         description="Shared UI components across pages",
     )
+    tech_stack: TechStack = Field(
+        default_factory=TechStack,
+        description=(
+            "Technology choices for the build. Use 'html'+'css'+'vanilla' for most sites. "
+            "Use 'jsx'+'scss'+'react' for complex interactive apps."
+        ),
+    )
     required_agents: list[str] = Field(
         default_factory=lambda: ["designer", "developer", "reviewer"],
         description=(
-            "Which agents are needed for this task. Subset of "
-            "['designer', 'developer', 'reviewer']. "
-            "Developer is always required. Designer is needed for new sites or "
-            "brand changes, not for content edits. Reviewer is needed for complex "
-            "builds, not for simple text changes."
+            "Which agents are needed for this task. Options include:\n"
+            "- 'designer': Design system (needed for new sites or brand changes)\n"
+            "- 'developer': Monolithic developer (writes all HTML/CSS/JS)\n"
+            "- 'markup': Specialist — writes HTML/JSX only\n"
+            "- 'style': Specialist — writes CSS only\n"
+            "- 'style_scss': Specialist — writes SCSS only\n"
+            "- 'script': Specialist — writes JavaScript only\n"
+            "- 'image': Specialist — generates images before other specialists\n"
+            "- 'reviewer': QA review (needed for complex builds)\n"
+            "Post-process agents (run after build, before reviewer):\n"
+            "- 'copywriter': Rewrites placeholder text with on-brand copy\n"
+            "- 'seo': Injects meta tags, sitemap.xml, robots.txt\n"
+            "- 'accessibility': Adds ARIA labels, fixes contrast, WCAG AA\n"
+            "- 'animation': Creates scroll-triggered animations and transitions\n"
+            "Use EITHER 'developer' (monolithic) OR specialists ('markup'+'style'+'script'), not both."
         ),
     )
 
@@ -171,6 +196,11 @@ class Project(BaseModel):
     logo_url: str = Field(default="")
     icon_url: str = Field(default="")
     style_spec: StyleSpec | None = Field(default=None)
+    agent_overrides: dict | None = Field(
+        default=None,
+        description="Per-project agent overrides keyed by agent name (pm, designer, developer, reviewer). "
+        "Each value is a dict with optional keys: model, temperature, system_prompt_override.",
+    )
     created_at: str = Field(default_factory=lambda: datetime.now(timezone.utc).isoformat())
     updated_at: str = Field(default_factory=lambda: datetime.now(timezone.utc).isoformat())
 
@@ -210,13 +240,14 @@ class PageVersion(BaseModel):
 class AgentConfig(BaseModel):
     """Server-side configuration for a pipeline agent."""
 
-    agent_name: str = Field(description="Agent key: pm, designer, developer, reviewer")
+    agent_name: str = Field(description="Agent key: pm, designer, developer, reviewer, markup, style, script, image")
     enabled: bool = Field(default=True, description="Whether this agent is active")
     model: str = Field(default="", description="Model override (empty = use project default)")
     temperature: float = Field(default=0.5, description="Sampling temperature 0-1")
     system_prompt_override: str | None = Field(
         default=None, description="Custom system prompt (None = use default persona)"
     )
+    category: str = Field(default="", description="Agent category: planning, design, development, assets, qa")
     updated_at: str = Field(default_factory=lambda: datetime.now(timezone.utc).isoformat())
 
 
@@ -235,6 +266,7 @@ class AgentRun(BaseModel):
     output_tokens: int = Field(default=0)
     cost: float = Field(default=0.0)
     reasoning: str = Field(default="")
+    session_id: str = Field(default="")  # Prompture tracker session ID
     output_summary: dict = Field(default_factory=dict)
 
 

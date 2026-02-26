@@ -18,6 +18,7 @@ CREATE TABLE IF NOT EXISTS projects (
     description TEXT NOT NULL DEFAULT '',
     model TEXT NOT NULL DEFAULT '',
     style_spec TEXT,
+    agent_overrides TEXT,
     created_at TEXT NOT NULL,
     updated_at TEXT NOT NULL
 );
@@ -63,6 +64,7 @@ CREATE TABLE IF NOT EXISTS agent_configs (
     model TEXT NOT NULL DEFAULT '',
     temperature REAL NOT NULL DEFAULT 0.5,
     system_prompt_override TEXT,
+    category TEXT NOT NULL DEFAULT '',
     updated_at TEXT NOT NULL
 );
 
@@ -78,6 +80,7 @@ CREATE TABLE IF NOT EXISTS agent_runs (
     input_tokens INTEGER NOT NULL DEFAULT 0,
     output_tokens INTEGER NOT NULL DEFAULT 0,
     cost REAL NOT NULL DEFAULT 0.0,
+    session_id TEXT DEFAULT '',
     output_summary TEXT DEFAULT '{}'
 );
 """
@@ -152,6 +155,16 @@ class Database:
             await self._conn.executescript(MIGRATION_SQL)
             await self._conn.commit()
 
+        # Add session_id column to agent_runs table if missing
+        cursor = await self._conn.execute("PRAGMA table_info(agent_runs)")
+        ar_columns = {row[1] for row in await cursor.fetchall()}
+        if ar_columns and "session_id" not in ar_columns:
+            logger.info("Adding 'session_id' column to agent_runs table...")
+            await self._conn.execute(
+                "ALTER TABLE agent_runs ADD COLUMN session_id TEXT DEFAULT ''"
+            )
+            await self._conn.commit()
+
         # Add files column to versions table if missing (incremental migration)
         cursor = await self._conn.execute("PRAGMA table_info(versions)")
         version_columns = {row[1] for row in await cursor.fetchall()}
@@ -160,24 +173,72 @@ class Database:
             await self._conn.execute("ALTER TABLE versions ADD COLUMN files TEXT DEFAULT '{}'")
             await self._conn.commit()
 
+        # Add agent_overrides column to projects table if missing
+        if columns and "agent_overrides" not in columns:
+            logger.info("Adding 'agent_overrides' column to projects table...")
+            await self._conn.execute("ALTER TABLE projects ADD COLUMN agent_overrides TEXT")
+            await self._conn.commit()
+
+        # Add category column to agent_configs table if missing
+        cursor = await self._conn.execute("PRAGMA table_info(agent_configs)")
+        ac_columns = {row[1] for row in await cursor.fetchall()}
+        if ac_columns and "category" not in ac_columns:
+            logger.info("Adding 'category' column to agent_configs table...")
+            await self._conn.execute(
+                "ALTER TABLE agent_configs ADD COLUMN category TEXT NOT NULL DEFAULT ''"
+            )
+            await self._conn.commit()
+            # Backfill categories from registry
+            try:
+                from agentsite.agents.registry import AgentRegistry
+
+                for desc in AgentRegistry.list_all():
+                    await self._conn.execute(
+                        "UPDATE agent_configs SET category = ? WHERE agent_name = ?",
+                        (desc.category.value, desc.key),
+                    )
+                await self._conn.commit()
+            except ImportError:
+                logger.debug("Could not import AgentRegistry for category backfill")
+
     async def _seed_agent_configs(self) -> None:
-        """Insert default agent configs if they don't exist."""
+        """Insert default agent configs if they don't exist.
+
+        Seeds both the core 4 agents and the specialist agents.
+        Specialist agents are disabled by default for backward compatibility.
+        """
         from datetime import datetime, timezone
 
         now = datetime.now(timezone.utc).isoformat()
-        defaults = [
-            ("pm", 1, "", 0.3, None, now),
-            ("designer", 1, "", 0.5, None, now),
-            ("developer", 1, "", 0.2, None, now),
-            ("reviewer", 1, "", 0.1, None, now),
-        ]
-        for row in defaults:
-            await self._conn.execute(
-                """INSERT OR IGNORE INTO agent_configs
-                   (agent_name, enabled, model, temperature, system_prompt_override, updated_at)
-                   VALUES (?, ?, ?, ?, ?, ?)""",
-                row,
-            )
+
+        # Try to seed from registry (has all agents including specialists)
+        try:
+            from agentsite.agents.registry import AgentRegistry
+
+            core_keys = {"pm", "designer", "developer", "reviewer"}
+            for desc in AgentRegistry.list_all():
+                enabled = 1 if desc.key in core_keys else 0
+                await self._conn.execute(
+                    """INSERT OR IGNORE INTO agent_configs
+                       (agent_name, enabled, model, temperature, system_prompt_override, category, updated_at)
+                       VALUES (?, ?, ?, ?, ?, ?, ?)""",
+                    (desc.key, enabled, "", desc.default_temperature, None, desc.category.value, now),
+                )
+        except ImportError:
+            # Fallback: seed core agents only if registry can't be imported
+            defaults = [
+                ("pm", 1, "", 0.3, None, "planning", now),
+                ("designer", 1, "", 0.5, None, "design", now),
+                ("developer", 1, "", 0.2, None, "development", now),
+                ("reviewer", 1, "", 0.1, None, "qa", now),
+            ]
+            for row in defaults:
+                await self._conn.execute(
+                    """INSERT OR IGNORE INTO agent_configs
+                       (agent_name, enabled, model, temperature, system_prompt_override, category, updated_at)
+                       VALUES (?, ?, ?, ?, ?, ?, ?)""",
+                    row,
+                )
         await self._conn.commit()
 
     async def close(self) -> None:

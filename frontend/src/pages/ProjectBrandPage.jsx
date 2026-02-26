@@ -1,10 +1,13 @@
-import { useState, useRef } from "react";
+import { useState, useEffect, useRef } from "react";
 import { useParams } from "react-router-dom";
 import {
   CaretRight,
+  CaretDown,
   UploadSimple,
   Palette,
   Image,
+  Books,
+  File,
 } from "@phosphor-icons/react";
 import useProject from "../hooks/useProject";
 import * as projectsApi from "../api/projects";
@@ -247,6 +250,94 @@ function FileUpload({ label, currentUrl, onUpload, projectId }) {
         className="hidden"
       />
     </div>
+  );
+}
+
+function GuideCard({ filename, content }) {
+  const [expanded, setExpanded] = useState(false);
+  const isJson = filename.endsWith(".json");
+  let displayContent = content;
+  if (isJson) {
+    try {
+      displayContent = JSON.stringify(JSON.parse(content), null, 2);
+    } catch {
+      // keep raw content
+    }
+  }
+
+  return (
+    <div className="bg-slate-900 border border-slate-800 rounded-lg overflow-hidden">
+      <button
+        onClick={() => setExpanded(!expanded)}
+        className="w-full flex items-center gap-3 px-4 py-3 text-left hover:bg-slate-800/50 transition-colors"
+      >
+        <File size={16} className="text-slate-500 shrink-0" />
+        <span className="text-sm font-mono text-slate-300 flex-1">{filename}</span>
+        {expanded ? (
+          <CaretDown size={14} className="text-slate-500" />
+        ) : (
+          <CaretRight size={14} className="text-slate-500" />
+        )}
+      </button>
+      {expanded && (
+        <div className="border-t border-slate-800 px-4 py-3 max-h-96 overflow-auto">
+          <pre className="text-xs font-mono text-slate-400 whitespace-pre-wrap break-words">
+            {displayContent}
+          </pre>
+        </div>
+      )}
+    </div>
+  );
+}
+
+function KnowledgeBase({ projectId }) {
+  const [guides, setGuides] = useState(null);
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    projectsApi
+      .fetchGuides(projectId)
+      .then((data) => setGuides(data))
+      .catch(() => setGuides(null))
+      .finally(() => setLoading(false));
+  }, [projectId]);
+
+  const entries = guides ? Object.entries(guides) : [];
+
+  if (loading) {
+    return (
+      <section>
+        <SectionHeader title="Knowledge Base" description="Agent-generated guide files that persist across generations." />
+        <div className="flex items-center justify-center py-8">
+          <Spinner size={20} />
+        </div>
+      </section>
+    );
+  }
+
+  if (entries.length === 0) {
+    return (
+      <section>
+        <SectionHeader title="Knowledge Base" description="Agent-generated guide files that persist across generations." />
+        <div className="bg-slate-900 border border-slate-800 rounded-xl p-6 text-center">
+          <Books className="text-slate-600 mx-auto mb-3" size={32} />
+          <p className="text-sm text-slate-500">
+            No guide files yet — generate a page and agents will create design-system.md, architecture.md, style.json, and site-plan.json.
+          </p>
+        </div>
+      </section>
+    );
+  }
+
+  return (
+    <section>
+      <SectionHeader title="Knowledge Base" description="Agent-generated guide files that persist across generations." />
+      <div className="space-y-2">
+        {entries.map(([filename, content]) => (
+          <GuideCard key={filename} filename={filename} content={content} />
+        ))}
+      </div>
+    </section>
   );
 }
 
@@ -700,6 +791,13 @@ export default function ProjectBrandPage() {
             </p>
           </div>
           {project && <BrandContent project={project} refresh={refresh} />}
+
+          {project && (
+            <>
+              <hr className="border-slate-800 my-10" />
+              <KnowledgeBase projectId={projectId} />
+            </>
+          )}
         </div>
       </div>
     </div>
