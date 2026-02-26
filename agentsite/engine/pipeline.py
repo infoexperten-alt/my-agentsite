@@ -414,6 +414,29 @@ class GenerationPipeline:
             except Exception:
                 logger.debug("Could not parse required_agents from PM output, using all agents")
 
+            # Filter out agents that are disabled in agent configs (global or project-level)
+            if self._agent_configs:
+                disabled_agents = {
+                    key for key, cfg in self._agent_configs.items()
+                    if not cfg.enabled
+                }
+                if disabled_agents:
+                    before = list(required_agents)
+                    required_agents = [a for a in required_agents if a not in disabled_agents]
+                    removed = set(before) - set(required_agents)
+                    if removed:
+                        logger.info("Filtered out disabled agents: %s", removed)
+                    # Re-check: if specialist agents were disabled, fall back to developer (if enabled)
+                    has_specialists = any(k in required_agents for k in ("markup", "style", "style_scss", "script"))
+                    has_developer = "developer" in required_agents
+                    if not has_specialists and not has_developer:
+                        # All build agents disabled — add developer as fallback unless also disabled
+                        if "developer" not in disabled_agents:
+                            required_agents.append("developer")
+                            logger.info("Added developer agent as fallback (all specialists disabled)")
+                        else:
+                            logger.warning("All build agents are disabled — generation may fail")
+
             # Emit pipeline_plan event so frontend knows which agents will run
             all_agents = ["pm"] + [a for a in required_agents]
 

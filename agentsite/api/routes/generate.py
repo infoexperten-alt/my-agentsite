@@ -84,7 +84,7 @@ async def start_generation(
     configs_list = await agent_config_repo.list_all()
     agent_configs = {c.agent_name: c for c in configs_list}
 
-    # Merge project-level agent overrides (model, temperature, system_prompt_override)
+    # Merge project-level agent overrides (enabled, model, temperature, system_prompt_override)
     if project.agent_overrides:
         from ...models import AgentConfig as AgentConfigModel
         for agent_key, overrides in project.agent_overrides.items():
@@ -93,6 +93,8 @@ async def start_generation(
             if agent_key not in agent_configs:
                 agent_configs[agent_key] = AgentConfigModel(agent_name=agent_key)
             cfg = agent_configs[agent_key]
+            if "enabled" in overrides:
+                cfg.enabled = bool(overrides["enabled"])
             if overrides.get("model") and "/" in overrides["model"]:
                 cfg.model = overrides["model"]
             if "temperature" in overrides:
