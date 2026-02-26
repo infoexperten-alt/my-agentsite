@@ -22,6 +22,14 @@ class UpdateAgentRequest(BaseModel):
     system_prompt_override: str | None = None
 
 
+@router.get("/catalog")
+async def get_catalog():
+    """Return the full agent catalog with metadata for all registered agents."""
+    from agentsite.agents.registry import AgentRegistry
+
+    return AgentRegistry.to_catalog()
+
+
 @router.get("", response_model=list[AgentConfig])
 async def list_agents(repo=Depends(get_agent_config_repo)):
     """List all agent configurations."""

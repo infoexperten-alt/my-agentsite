@@ -12,9 +12,14 @@ from typing import Any
 
 from prompture import AsyncSequentialGroup, ErrorPolicy, GroupCallbacks, GroupResult
 
-from ..agents.orchestrator import _agent_model, _apply_agent_overrides, create_dynamic_pipeline
+from ..agents.orchestrator import (
+    _agent_model,
+    _apply_agent_overrides,
+    create_dynamic_pipeline,
+    create_specialist_pipeline,
+)
 from ..config import settings
-from ..models import AgentConfig, AgentRun, PageOutput, Project, SitePlan, StyleSpec, WSEvent
+from ..models import AgentConfig, AgentRun, PageOutput, Project, SitePlan, StyleSpec, TechStack, WSEvent
 from .project_manager import ProjectManager
 from .reasoning_patch import apply_reasoning_patch
 
@@ -31,6 +36,15 @@ def _agent_name_to_key(name: str) -> str:
         "agentsite_designer": "designer",
         "agentsite_developer": "developer",
         "agentsite_reviewer": "reviewer",
+        "agentsite_markup": "markup",
+        "agentsite_style": "style",
+        "agentsite_style_scss": "style_scss",
+        "agentsite_script": "script",
+        "agentsite_image": "image",
+        "agentsite_copywriter": "copywriter",
+        "agentsite_seo": "seo",
+        "agentsite_accessibility": "accessibility",
+        "agentsite_animation": "animation",
     }
     return _NAME_MAP.get(name, name)
 
@@ -172,6 +186,17 @@ class GenerationPipeline:
             except RuntimeError:
                 pass  # No event loop in thread context — file_written events are nice-to-have
 
+        def _on_asset_created(filename: str) -> None:
+            try:
+                loop = asyncio.get_running_loop()
+                task = loop.create_task(
+                    self._emit("asset_created", data={"filename": filename})
+                )
+                _background_tasks.append(task)
+                task.add_done_callback(_background_tasks.remove)
+            except RuntimeError:
+                pass
+
         async def _on_agent_start(name: str, prompt: str) -> None:
             agent_key = _agent_name_to_key(name)
             started_at = datetime.now(timezone.utc).isoformat()
@@ -224,12 +249,15 @@ class GenerationPipeline:
                         or 0.0
                     )
 
-            # Capture developer output directly for fallback extraction
-            if agent_key == "developer":
-                self._developer_output_text = output_text
-                self._developer_tool_calls = tool_calls
+            # Capture developer/specialist output for fallback extraction
+            _build_agents = {"developer", "markup", "style", "style_scss", "script"}
+            if agent_key in _build_agents:
+                if agent_key == "developer":
+                    self._developer_output_text = output_text
+                    self._developer_tool_calls = tool_calls
                 logger.info(
-                    "Developer agent completed: output_text length=%d, tool_calls=%d, output_text[:200]=%s",
+                    "%s agent completed: output_text length=%d, tool_calls=%d, output_text[:200]=%s",
+                    agent_key,
                     len(output_text),
                     len(tool_calls),
                     repr(output_text[:200]),
@@ -319,7 +347,10 @@ class GenerationPipeline:
         deps = {
             "project_dir": self._pm.project_dir(project.id),
             "version_dir": version_dir,
+            "assets_dir": self._pm.assets_dir(project.id),
+            "project_id": project.id,
             "on_file_written": _on_file_written,
+            "on_asset_created": _on_asset_created,
             "written_files": written_files,
         }
 
@@ -365,8 +396,9 @@ class GenerationPipeline:
                 except Exception:
                     logger.warning("Failed to write site-plan.json guide", exc_info=True)
 
-            # Parse required_agents from the PM output
+            # Parse required_agents and tech_stack from the PM output
             required_agents = ["designer", "developer", "reviewer"]  # default
+            tech_stack = TechStack()
             try:
                 from prompture import clean_json_text
 
@@ -374,15 +406,48 @@ class GenerationPipeline:
                 plan_data = json.loads(cleaned)
                 site_plan = SitePlan.model_validate(plan_data)
                 required_agents = site_plan.required_agents
-                # Ensure developer is always present
-                if "developer" not in required_agents:
+                tech_stack = site_plan.tech_stack
+                # Ensure at least one build agent is present
+                has_specialists = any(k in required_agents for k in ("markup", "style", "style_scss", "script"))
+                if not has_specialists and "developer" not in required_agents:
                     required_agents.append("developer")
             except Exception:
                 logger.debug("Could not parse required_agents from PM output, using all agents")
 
             # Emit pipeline_plan event so frontend knows which agents will run
             all_agents = ["pm"] + [a for a in required_agents]
-            await self._emit("pipeline_plan", data={"required_agents": all_agents})
+
+            # Detect parallel groups for frontend visualization
+            specialist_keys = {"markup", "style", "style_scss", "script"}
+            parallel_agents = [k for k in required_agents if k in specialist_keys]
+            parallel_groups = [parallel_agents] if len(parallel_agents) > 1 else []
+
+            # Post-processing parallel group (seo, accessibility, animation)
+            post_process_parallel_keys = {"seo", "accessibility", "animation"}
+            post_parallel = [k for k in required_agents if k in post_process_parallel_keys]
+            if len(post_parallel) > 1:
+                parallel_groups.append(post_parallel)
+
+            # Build agent metadata from registry
+            from agentsite.agents.registry import AgentRegistry
+
+            agent_meta = {}
+            for key in all_agents:
+                desc = AgentRegistry.get(key)
+                if desc:
+                    agent_meta[key] = {
+                        "name": desc.name,
+                        "icon": desc.icon,
+                        "icon_color": desc.icon_color,
+                        "category": desc.category.value,
+                    }
+
+            await self._emit("pipeline_plan", data={
+                "required_agents": all_agents,
+                "agent_meta": agent_meta,
+                "parallel_groups": parallel_groups,
+                "tech_stack": tech_stack.model_dump(),
+            })
 
             # --- Load existing guides for template injection ---
             design_system_guide = self._pm.read_guide(project.id, "design-system.md") or ""
@@ -400,6 +465,7 @@ class GenerationPipeline:
                 "page_title": slug.replace("-", " ").title(),
                 "design_system_guide": design_system_guide,
                 "architecture_guide": architecture_guide,
+                "tech_stack": tech_stack.model_dump_json(),
             }
 
             if "designer" in required_agents:
@@ -456,17 +522,37 @@ class GenerationPipeline:
                 else:
                     initial_state["style_spec"] = StyleSpec().model_dump_json()
 
-            # --- Phase C: Build dynamic pipeline for developer+reviewer ---
+            # --- Phase C: Build pipeline — specialist (parallel) or legacy (monolithic) ---
             max_cost = settings.max_generation_cost or None
-            remaining_pipeline = create_dynamic_pipeline(
-                remaining_agents,
-                model,
-                callbacks=group_callbacks,
-                agent_configs=self._agent_configs,
-                error_policy=ErrorPolicy.raise_on_error,
-                deps=deps,
-                max_total_cost=max_cost,
-            )
+            specialist_keys = {"markup", "style", "style_scss", "script", "image"}
+            has_specialists = any(k in remaining_agents for k in specialist_keys)
+
+            # Resolve models for specialist and post-processing agents
+            all_specialist_keys = specialist_keys | {"copywriter", "seo", "accessibility", "animation"}
+            for agent_key in all_specialist_keys:
+                if agent_key in remaining_agents:
+                    self._agent_models[agent_key] = _agent_model(agent_key, model, self._agent_configs)
+
+            if has_specialists:
+                remaining_pipeline = create_specialist_pipeline(
+                    remaining_agents,
+                    model,
+                    callbacks=group_callbacks,
+                    agent_configs=self._agent_configs,
+                    error_policy=ErrorPolicy.raise_on_error,
+                    deps=deps,
+                    max_total_cost=max_cost,
+                )
+            else:
+                remaining_pipeline = create_dynamic_pipeline(
+                    remaining_agents,
+                    model,
+                    callbacks=group_callbacks,
+                    agent_configs=self._agent_configs,
+                    error_policy=ErrorPolicy.raise_on_error,
+                    deps=deps,
+                    max_total_cost=max_cost,
+                )
 
             # Transfer state from PM phase and propagate to nested groups
             # (LoopGroup) so prompt templates like {site_plan} resolve.
@@ -603,6 +689,16 @@ class GenerationPipeline:
                 )
                 if page_output_text:
                     self._write_files_from_output(project.id, slug, version_number, page_output_text)
+
+            # Post-generation: compile SCSS files if present
+            try:
+                from .scss_compiler import compile_directory
+
+                scss_count = compile_directory(version_dir)
+                if scss_count:
+                    logger.info("Compiled %d SCSS files to CSS", scss_count)
+            except ImportError:
+                pass  # libsass not installed — no SCSS compilation
 
             # Verify files actually exist on disk
             final_files = self._pm.list_version_files(project.id, slug, version_number)

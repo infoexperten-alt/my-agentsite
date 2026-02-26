@@ -29,5 +29,14 @@ async def upload_asset(project_id: str, file: UploadFile, assets=Depends(get_ass
 
 @router.get("/api/projects/{project_id}/assets")
 async def list_assets(project_id: str, assets=Depends(get_assets)):
-    """List all uploaded assets for a project."""
-    return {"assets": assets.list_assets(project_id)}
+    """List all uploaded assets for a project with metadata."""
+    return {"assets": assets.list_assets_detailed(project_id)}
+
+
+@router.delete("/api/projects/{project_id}/assets/{filename}")
+async def delete_asset(project_id: str, filename: str, assets=Depends(get_assets)):
+    """Delete an asset file from a project."""
+    deleted = assets.delete_asset(project_id, filename)
+    if not deleted:
+        raise HTTPException(status_code=404, detail=f"Asset not found: {filename}")
+    return {"deleted": True, "filename": filename}

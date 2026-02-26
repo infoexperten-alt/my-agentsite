@@ -1,5 +1,9 @@
 import { fetchJSON } from "./client";
 
+export async function getCatalog() {
+  return fetchJSON("/api/agents/catalog");
+}
+
 export async function listAgents() {
   return fetchJSON("/api/agents");
 }

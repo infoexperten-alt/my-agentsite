@@ -384,12 +384,15 @@ class AgentConfigRepository:
 
     @staticmethod
     def _row_to_config(row: Any) -> AgentConfig:
+        # category column may not exist in older DBs before migration runs
+        row_keys = row.keys() if hasattr(row, "keys") else []
         return AgentConfig(
             agent_name=row["agent_name"],
             enabled=bool(row["enabled"]),
             model=row["model"],
             temperature=row["temperature"],
             system_prompt_override=row["system_prompt_override"],
+            category=row["category"] if "category" in row_keys else "",
             updated_at=row["updated_at"],
         )
 

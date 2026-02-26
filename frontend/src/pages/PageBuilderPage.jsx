@@ -128,7 +128,18 @@ export default function PageBuilderPage() {
   };
 
   const getAgentLabel = useCallback((name) => {
-    return name.charAt(0).toUpperCase() + name.slice(1);
+    const labels = {
+      pm: "PM",
+      designer: "Designer",
+      developer: "Developer",
+      reviewer: "Reviewer",
+      markup: "Markup",
+      style: "Style",
+      style_scss: "SCSS",
+      script: "Script",
+      image: "Image",
+    };
+    return labels[name] || name.charAt(0).toUpperCase() + name.slice(1);
   }, []);
 
   // Maintain a single agent-progress message that updates as events arrive
@@ -138,7 +149,7 @@ export default function PageBuilderPage() {
     const agentEntries = Object.entries(gen.agents);
     if (agentEntries.length === 0 && !gen.pipelineAgents) return;
 
-    const CANONICAL_ORDER = ["pm", "designer", "developer", "reviewer"];
+    const CANONICAL_ORDER = ["pm", "designer", "image", "developer", "markup", "style", "style_scss", "script", "reviewer"];
     const pipelineSet = gen.pipelineAgents || agentEntries.map(([name]) => name);
     const knownAgents = CANONICAL_ORDER.filter((k) => pipelineSet.includes(k));
     const agentsList = knownAgents.map((name) => {

@@ -6,6 +6,12 @@ export const listAssets = (projectId) =>
 export const uploadAsset = (projectId, file) =>
   uploadFile(`/api/projects/${projectId}/assets`, file);
 
+export const deleteAsset = (projectId, filename) =>
+  fetchJSON(`/api/projects/${projectId}/assets/${filename}`, { method: "DELETE" });
+
+export const getAssetUrl = (projectId, filename) =>
+  `${API_BASE}/preview/${projectId}/assets/${filename}`;
+
 export const getPreviewUrl = (projectId, slug, version) => {
   if (version) {
     return `${API_BASE}/preview/${projectId}/${slug}/v/${version}/index.html`;

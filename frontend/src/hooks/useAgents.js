@@ -1,8 +1,9 @@
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, useMemo } from "react";
 import * as agentsApi from "../api/agents";
 
 export default function useAgents() {
   const [agents, setAgents] = useState([]);
+  const [catalog, setCatalog] = useState([]);
   const [stats, setStats] = useState(null);
   const [runs, setRuns] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -10,12 +11,14 @@ export default function useAgents() {
   const refresh = useCallback(async () => {
     setLoading(true);
     try {
-      const [agentList, agentStats, agentRuns] = await Promise.all([
+      const [agentList, agentCatalog, agentStats, agentRuns] = await Promise.all([
         agentsApi.listAgents(),
+        agentsApi.getCatalog(),
         agentsApi.getAgentStats(),
         agentsApi.getAgentRuns(20),
       ]);
       setAgents(agentList);
+      setCatalog(agentCatalog);
       setStats(agentStats);
       setRuns(agentRuns);
     } catch (err) {
@@ -40,5 +43,16 @@ export default function useAgents() {
     []
   );
 
-  return { agents, stats, runs, loading, refresh, updateAgent };
+  // Group catalog by category for section rendering
+  const catalogByCategory = useMemo(() => {
+    const groups = {};
+    for (const item of catalog) {
+      const cat = item.category || "other";
+      if (!groups[cat]) groups[cat] = [];
+      groups[cat].push(item);
+    }
+    return groups;
+  }, [catalog]);
+
+  return { agents, catalog, catalogByCategory, stats, runs, loading, refresh, updateAgent };
 }

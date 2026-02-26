@@ -9,13 +9,16 @@ import {
   Books,
   MagnifyingGlass,
   Rocket,
+  Robot,
+  ArrowUpRight,
+  GithubLogo,
 } from "@phosphor-icons/react";
 
 const projectNav = [
   { path: "", label: "Overview & Pages", icon: Kanban, end: true },
   { path: "/brand", label: "Brand", icon: PaintBrush },
   { path: "/navigation", label: "Navigation", icon: List },
-  { path: "/library", label: "Library", icon: Books, soon: true },
+  { path: "/library", label: "Library", icon: Books },
   { path: "/seo", label: "SEO", icon: MagnifyingGlass, soon: true },
   { path: "/deployments", label: "Deployments", icon: Rocket, soon: true },
   { path: "/settings", label: "Settings", icon: Gear },
@@ -70,6 +73,33 @@ export default function ProjectSidebar() {
             </NavLink>
           ))}
         </nav>
+      </div>
+
+      <div className="p-4 border-t border-slate-800/50 space-y-3">
+        <a
+          href="https://github.com/jhd3197/CachiBot"
+          target="_blank"
+          rel="noopener noreferrer"
+          className="block p-3 rounded-lg bg-gradient-to-br from-brand-500/10 to-purple-600/10 border border-brand-500/15 hover:border-brand-500/30 transition-all group"
+        >
+          <div className="flex items-center gap-2 mb-1.5">
+            <Robot size={16} weight="fill" className="text-brand-400" />
+            <span className="text-xs font-semibold text-brand-400">CachiBot</span>
+            <ArrowUpRight size={12} className="text-brand-400/50 ml-auto group-hover:text-brand-400 transition-colors" />
+          </div>
+          <p className="text-[11px] leading-relaxed text-slate-400">
+            Enjoying AgentSite? You'll love CachiBot — AI-powered multi-agent orchestration taken further.
+          </p>
+        </a>
+        <a
+          href="https://github.com/jhd3197/AgentSite"
+          target="_blank"
+          rel="noopener noreferrer"
+          className="flex items-center gap-2.5 px-3 py-2 rounded-lg text-slate-500 hover:text-white hover:bg-slate-900 transition-colors text-sm"
+        >
+          <GithubLogo size={18} />
+          <span className="font-medium">Star on GitHub</span>
+        </a>
       </div>
     </aside>
   );

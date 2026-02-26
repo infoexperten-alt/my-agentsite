@@ -1,5 +1,13 @@
 import ModelSelect from "../shared/ModelSelect";
 
+const CATEGORY_COLORS = {
+  planning: "bg-orange-500/10 text-orange-400 border-orange-500/20",
+  design: "bg-pink-500/10 text-pink-400 border-pink-500/20",
+  development: "bg-blue-500/10 text-blue-400 border-blue-500/20",
+  assets: "bg-emerald-500/10 text-emerald-400 border-emerald-500/20",
+  qa: "bg-red-500/10 text-red-400 border-red-500/20",
+};
+
 export default function AgentCard({
   agent,
   onChange,
@@ -17,6 +25,8 @@ export default function AgentCard({
     model,
     creativity,
     prompt,
+    category,
+    legacy,
   } = agent;
 
   const handleField = (field, value) => {
@@ -29,6 +39,8 @@ export default function AgentCard({
     onChange(key, apiUpdate);
   };
 
+  const categoryStyle = CATEGORY_COLORS[category] || "bg-slate-500/10 text-slate-400 border-slate-500/20";
+
   return (
     <div className="bg-slate-900 border border-slate-800 rounded-xl p-6 relative overflow-hidden group hover:border-slate-700 transition-colors">
       <div className="flex justify-between items-start mb-6">
@@ -40,8 +52,20 @@ export default function AgentCard({
             {Icon && <Icon size={24} />}
           </div>
           <div>
-            <h3 className="text-white font-bold text-lg">{label}</h3>
-            <p className="text-xs text-slate-500">{step}</p>
+            <div className="flex items-center gap-2">
+              <h3 className="text-white font-bold text-lg">{label}</h3>
+              {legacy && (
+                <span className="text-[10px] px-1.5 py-0.5 rounded bg-amber-500/10 text-amber-400 border border-amber-500/20">
+                  Legacy
+                </span>
+              )}
+            </div>
+            <p className="text-xs text-slate-500 line-clamp-1">{step}</p>
+            {category && (
+              <span className={`inline-block mt-1 text-[10px] px-1.5 py-0.5 rounded border ${categoryStyle}`}>
+                {category}
+              </span>
+            )}
           </div>
         </div>
         <label className="relative inline-flex items-center cursor-pointer">

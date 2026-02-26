@@ -6,8 +6,11 @@ export default function useGeneration(projectId) {
   const [generating, setGenerating] = useState(false);
   const [agents, setAgents] = useState({});
   const [files, setFiles] = useState([]);
+  const [generatedAssets, setGeneratedAssets] = useState([]);
   const [error, setError] = useState(null);
   const [pipelineAgents, setPipelineAgents] = useState(null);
+  const [agentMeta, setAgentMeta] = useState(null);
+  const [parallelGroups, setParallelGroups] = useState(null);
   const ws = useWebSocket(projectId);
   const versionRefreshRef = useRef(null);
   const projectRefreshRef = useRef(null);
@@ -78,10 +81,19 @@ export default function useGeneration(projectId) {
       ws.on("file_written", (msg) => {
         setFiles((prev) => [...prev, msg.data]);
       }),
+      ws.on("asset_created", (msg) => {
+        setGeneratedAssets((prev) => [...prev, msg.data]);
+      }),
       ws.on("pipeline_plan", (msg) => {
         const agents = msg.data?.required_agents;
         if (agents && agents.length > 0) {
           setPipelineAgents(agents);
+        }
+        if (msg.data?.agent_meta) {
+          setAgentMeta(msg.data.agent_meta);
+        }
+        if (msg.data?.parallel_groups) {
+          setParallelGroups(msg.data.parallel_groups);
         }
       }),
       ws.on("generation_complete", (msg) => {
@@ -118,8 +130,11 @@ export default function useGeneration(projectId) {
       setGenerating(true);
       setAgents({});
       setFiles([]);
+      setGeneratedAssets([]);
       setError(null);
       setPipelineAgents(null);
+      setAgentMeta(null);
+      setParallelGroups(null);
       ws.connect();
       try {
         await startGeneration(projectId, slug, data);
@@ -140,5 +155,5 @@ export default function useGeneration(projectId) {
     projectRefreshRef.current = fn;
   }, []);
 
-  return { generating, agents, files, error, pipelineAgents, start, onVersionRefresh, onProjectRefresh };
+  return { generating, agents, files, generatedAssets, error, pipelineAgents, agentMeta, parallelGroups, start, onVersionRefresh, onProjectRefresh };
 }

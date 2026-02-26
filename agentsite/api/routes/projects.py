@@ -5,6 +5,7 @@ from __future__ import annotations
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 
+from ...agents.registry import AgentRegistry
 from ...models import ChatMessage, Page, Project, StyleSpec
 from ..deps import get_message_repo, get_page_repo, get_pm, get_repo, get_version_repo
 
@@ -76,8 +77,8 @@ async def update_project(project_id: str, req: UpdateProjectRequest, repo=Depend
     if req.style_spec is not None:
         project.style_spec = StyleSpec.model_validate(req.style_spec)
     if req.agent_overrides is not None:
-        # Validate: only known agent keys, only known fields per agent
-        valid_agents = {"pm", "designer", "developer", "reviewer"}
+        # Validate: only registered agent keys, only known fields per agent
+        valid_agents = {d.key for d in AgentRegistry.list_all()}
         valid_fields = {"model", "temperature", "system_prompt_override"}
         cleaned = {}
         for agent_key, overrides in req.agent_overrides.items():
