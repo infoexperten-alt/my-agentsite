@@ -21,6 +21,9 @@ class GenerateRequest(BaseModel):
     prompt: str = ""
     model: str = ""
     agent_models: dict[str, str] | None = None
+    max_cost: float | None = None  # per-request budget override
+    budget_policy: str | None = None  # per-request policy override
+    provider_keys: dict[str, str] | None = None  # per-request provider key overrides
 
 
 @router.post("/api/projects/{project_id}/pages/{slug}/generate")
@@ -112,8 +115,25 @@ async def start_generation(
                 else:
                     agent_configs[agent_key] = AgentConfigModel(agent_name=agent_key, model=model_str)
 
+    # Merge provider keys: project-level, then request-level overrides
+    provider_keys = dict(project.provider_keys or {})
+    if req.provider_keys:
+        provider_keys.update(req.provider_keys)
+
     # Build pipeline
-    pipeline = GenerationPipeline(pm, on_event=on_event, agent_configs=agent_configs)
+    pipeline = GenerationPipeline(
+        pm,
+        on_event=on_event,
+        agent_configs=agent_configs,
+        provider_keys=provider_keys or None,
+    )
+
+    # Import BudgetExceededError for specific handling (falls back to unusable sentinel)
+    try:
+        from prompture.exceptions import BudgetExceededError as _BudgetExceededError
+    except ImportError:
+        class _BudgetExceededError(Exception):  # type: ignore[no-redef]
+            """Placeholder — never raised when prompture is missing."""
 
     async def _run():
         try:
@@ -122,6 +142,8 @@ async def start_generation(
                 slug=slug,
                 version_number=version_number,
                 page_prompt=prompt,
+                max_cost=req.max_cost,
+                budget_policy=req.budget_policy,
             )
             # Auto-save designer's StyleSpec back to the project
             if pipeline.style_spec_text:
@@ -136,7 +158,21 @@ async def start_generation(
                     project.style_spec = StyleSpec.model_validate(ss_data)
                     await repo.update(project)
                 except Exception:
-                    logger.warning("Failed to auto-save StyleSpec to project", exc_info=True)
+                    # Fallback: use extract_with_model to re-extract from raw output
+                    from ...engine.extract import extract_structured
+                    from ...models import StyleSpec
+
+                    extracted = await extract_structured(
+                        StyleSpec,
+                        pipeline.style_spec_text,
+                        project.model or "openai/gpt-4o",
+                        instruction="Extract the design style specification from this output:",
+                    )
+                    if extracted:
+                        project.style_spec = extracted
+                        await repo.update(project)
+                    else:
+                        logger.warning("Failed to auto-save StyleSpec to project", exc_info=True)
 
             # Read generated files from disk into version record
             file_list = pm.list_version_files(project.id, slug, version_number)
@@ -152,6 +188,55 @@ async def start_generation(
             version.files = files_content
             version.completed_at = datetime.now(timezone.utc).isoformat()
             await version_repo.update(version)
+        except _BudgetExceededError as budget_exc:
+            logger.warning(
+                "Budget exceeded for project %s page %s: %s",
+                project_id, slug, budget_exc,
+            )
+            # Save any files that were written before budget was hit
+            file_list = pm.list_version_files(project.id, slug, version_number)
+            files_content: dict[str, str] = {}
+            for fpath in file_list:
+                content = pm.read_version_file(project.id, slug, version_number, fpath)
+                if content is not None:
+                    files_content[fpath] = content
+
+            version.status = "budget_exceeded"
+            version.error = str(budget_exc)
+            version.files = files_content or None
+            version.completed_at = datetime.now(timezone.utc).isoformat()
+            await version_repo.update(version)
+
+            from ...models import WSEvent
+            try:
+                await ws_manager.broadcast(
+                    project_id,
+                    WSEvent(
+                        type="budget_exceeded",
+                        data={
+                            "message": str(budget_exc),
+                            "slug": slug,
+                            "version": version_number,
+                            "files_recovered": len(files_content),
+                        },
+                    ),
+                )
+                await ws_manager.broadcast(
+                    project_id,
+                    WSEvent(
+                        type="generation_complete",
+                        data={
+                            "success": False,
+                            "slug": slug,
+                            "version": version_number,
+                            "files": file_list,
+                            "error": str(budget_exc),
+                            "budget_exceeded": True,
+                        },
+                    ),
+                )
+            except Exception:
+                logger.warning("Failed to broadcast budget_exceeded via WebSocket")
         except Exception as exc:
             import traceback as tb_mod
             error_detail = str(exc)

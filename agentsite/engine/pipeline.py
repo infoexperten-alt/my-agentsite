@@ -50,7 +50,11 @@ def _agent_name_to_key(name: str) -> str:
 
 
 def _attach_streaming_callbacks(group: Any, emit_fn: Any) -> None:
-    """Attach AgentCallbacks for real-time tool start/end events to all agents in a group."""
+    """Attach AgentCallbacks for real-time streaming events to all agents in a group.
+
+    Wires up tool start/end, thinking, step, iteration, and text output
+    callbacks so the frontend receives granular progress via WebSocket.
+    """
     try:
         from prompture import AgentCallbacks
     except ImportError:
@@ -83,12 +87,27 @@ def _attach_streaming_callbacks(group: Any, emit_fn: Any) -> None:
             async def _on_iteration(idx: int, *, _key: str = agent_key) -> None:
                 await emit_fn("agent_iteration", agent=_key, data={"iteration": idx})
 
+            async def _on_message(text: str, *, _key: str = agent_key) -> None:
+                """Emit agent text output as a text_delta event for real-time display."""
+                if text:
+                    await emit_fn("text_delta", agent=_key, data={"text": text[:4000]})
+
+            async def _on_output(result: Any, *, _key: str = agent_key) -> None:
+                """Emit structured output preview when agent produces final result."""
+                output_text = getattr(result, "output_text", "") or ""
+                if output_text:
+                    await emit_fn("agent_output", agent=_key, data={
+                        "text": output_text[:2000],
+                    })
+
             agent.callbacks = AgentCallbacks(
                 on_tool_start=_on_tool_start,
                 on_tool_end=_on_tool_end,
                 on_thinking=_on_thinking,
                 on_step=_on_step,
                 on_iteration=_on_iteration,
+                on_message=_on_message,
+                on_output=_on_output,
             )
 
 
@@ -114,6 +133,39 @@ def _merge_nested_group_state(group: Any) -> None:
                 group._state[k] = v
 
 
+def _build_budget_kwargs(
+    max_cost: float | None,
+    policy: str | None,
+    max_tokens: int | None,
+    fallback_models: list[str] | None,
+    on_fallback: Any | None,
+) -> dict[str, Any]:
+    """Build kwargs dict for budget enforcement on pipeline groups and agents.
+
+    Returns a dict with ``max_total_cost`` (for groups) and
+    ``budget_policy``, ``fallback_models``, ``budget_max_tokens``,
+    ``on_model_fallback`` (for agents via orchestrator).
+    """
+    kwargs: dict[str, Any] = {}
+    if max_cost:
+        kwargs["max_total_cost"] = max_cost
+    if policy:
+        try:
+            from prompture.infra import BudgetPolicy
+
+            kwargs["budget_policy"] = BudgetPolicy(policy)
+        except (ValueError, ImportError):
+            pass
+        else:
+            if max_tokens:
+                kwargs["budget_max_tokens"] = max_tokens
+            if fallback_models:
+                kwargs["fallback_models"] = fallback_models
+            if on_fallback:
+                kwargs["on_model_fallback"] = on_fallback
+    return kwargs
+
+
 class GenerationPipeline:
     """Orchestrates the generation process for a single page version.
 
@@ -127,10 +179,14 @@ class GenerationPipeline:
         *,
         on_event: Callable[[WSEvent], None] | None = None,
         agent_configs: dict[str, AgentConfig] | None = None,
+        cachibot_api_key: str | None = None,
+        provider_keys: dict[str, str] | None = None,
     ) -> None:
         self._pm = project_manager
         self._on_event = on_event
         self._agent_configs = agent_configs
+        self._cachibot_api_key = cachibot_api_key
+        self._provider_keys = provider_keys
         self.agent_runs: list[AgentRun] = []
         self._active_runs: dict[str, AgentRun] = {}
         self._run_start_times: dict[str, float] = {}
@@ -139,6 +195,22 @@ class GenerationPipeline:
         self._agent_models: dict[str, str] = {}  # agent_key -> resolved model name
         self.site_plan_text: str = ""  # raw PM output for guide persistence
         self.style_spec_text: str = ""  # raw Designer output for project persistence
+
+    def _inject_driver(self, agent: Any, model_str: str) -> None:
+        """Inject a per-project driver into an agent if provider_keys are set.
+
+        Uses the driver factory to build a custom driver with per-project
+        API keys, so this project's generation uses its own credentials.
+        """
+        if not self._provider_keys:
+            return
+
+        from .driver_factory import resolve_driver_for_model
+
+        driver = resolve_driver_for_model(model_str, self._provider_keys)
+        if driver is not None:
+            agent.driver = driver
+            logger.debug("Injected per-project driver for %s (model=%s)", agent.name, model_str)
 
     async def _emit(self, event_type: str, agent: str = "", data: dict[str, Any] | None = None) -> None:
         """Fire a WebSocket event if a callback is registered."""
@@ -154,6 +226,8 @@ class GenerationPipeline:
         slug: str,
         version_number: int,
         page_prompt: str,
+        max_cost: float | None = None,
+        budget_policy: str | None = None,
     ) -> GroupResult:
         """Run the generation pipeline for a single page version.
 
@@ -358,6 +432,13 @@ class GenerationPipeline:
 
         session_id = f"gen-{project.id}-{slug}-v{version_number}"
 
+        # Inject per-user CachiBot API key into env for this generation
+        import os as _os
+
+        _prev_cachibot_key = _os.environ.get("CACHIBOT_API_KEY")
+        if self._cachibot_api_key:
+            _os.environ["CACHIBOT_API_KEY"] = self._cachibot_api_key
+
         try:
             # --- Resolve model for each agent and store for WS events ---
             from ..agents.pm import create_pm_agent_auto
@@ -370,6 +451,7 @@ class GenerationPipeline:
             # Use auto factory to select structured/plain mode based on capabilities
             pm_agent = create_pm_agent_auto(pm_model)
             _apply_agent_overrides(pm_agent, "pm", self._agent_configs)
+            self._inject_driver(pm_agent, pm_model)
 
             pm_callbacks = GroupCallbacks(
                 on_agent_start=_on_agent_start,
@@ -399,20 +481,34 @@ class GenerationPipeline:
             # Parse required_agents and tech_stack from the PM output
             required_agents = ["designer", "developer", "reviewer"]  # default
             tech_stack = TechStack()
+            site_plan: SitePlan | None = None
             try:
                 from prompture import clean_json_text
 
                 cleaned = clean_json_text(site_plan_text)
                 plan_data = json.loads(cleaned)
                 site_plan = SitePlan.model_validate(plan_data)
+            except Exception:
+                logger.debug("JSON parse of PM output failed, trying extract_with_model fallback")
+                from .extract import extract_structured
+
+                pm_model = self._agent_models.get("pm", model)
+                site_plan = await extract_structured(
+                    SitePlan,
+                    site_plan_text,
+                    pm_model,
+                    instruction="Extract the site plan from this output:",
+                )
+
+            if site_plan is not None:
                 required_agents = site_plan.required_agents
                 tech_stack = site_plan.tech_stack
                 # Ensure at least one build agent is present
                 has_specialists = any(k in required_agents for k in ("markup", "style", "style_scss", "script"))
                 if not has_specialists and "developer" not in required_agents:
                     required_agents.append("developer")
-            except Exception:
-                logger.debug("Could not parse required_agents from PM output, using all agents")
+            else:
+                logger.debug("Could not parse required_agents from PM output, using defaults")
 
             # Filter out agents that are disabled in agent configs (global or project-level)
             if self._agent_configs:
@@ -498,6 +594,7 @@ class GenerationPipeline:
                 # Use auto factory to select structured/plain mode based on capabilities
                 designer_agent = create_designer_agent_auto(designer_model)
                 _apply_agent_overrides(designer_agent, "designer", self._agent_configs)
+                self._inject_driver(designer_agent, designer_model)
                 designer_prompt = (
                     "Design a visual style for this website:\n\n"
                     f"Site Plan: {site_plan_text}\n\n"
@@ -546,7 +643,25 @@ class GenerationPipeline:
                     initial_state["style_spec"] = StyleSpec().model_dump_json()
 
             # --- Phase C: Build pipeline — specialist (parallel) or legacy (monolithic) ---
-            max_cost = settings.max_generation_cost or None
+            # Build budget kwargs from per-request overrides or global settings
+            effective_max_cost = max_cost if max_cost is not None else (settings.max_generation_cost or None)
+            effective_policy = budget_policy or settings.budget_policy or None
+
+            async def _on_model_fallback(old_model: str, new_model: str, state: Any) -> None:
+                logger.info("Budget policy triggered model fallback: %s -> %s", old_model, new_model)
+                await self._emit(
+                    "model_fallback",
+                    data={"old_model": old_model, "new_model": new_model},
+                )
+
+            budget_kwargs = _build_budget_kwargs(
+                max_cost=effective_max_cost,
+                policy=effective_policy,
+                max_tokens=settings.budget_max_tokens or None,
+                fallback_models=settings.budget_fallback_models or None,
+                on_fallback=_on_model_fallback,
+            )
+
             specialist_keys = {"markup", "style", "style_scss", "script", "image"}
             has_specialists = any(k in remaining_agents for k in specialist_keys)
 
@@ -564,7 +679,8 @@ class GenerationPipeline:
                     agent_configs=self._agent_configs,
                     error_policy=ErrorPolicy.raise_on_error,
                     deps=deps,
-                    max_total_cost=max_cost,
+                    provider_keys=self._provider_keys,
+                    **budget_kwargs,
                 )
             else:
                 remaining_pipeline = create_dynamic_pipeline(
@@ -574,7 +690,8 @@ class GenerationPipeline:
                     agent_configs=self._agent_configs,
                     error_policy=ErrorPolicy.raise_on_error,
                     deps=deps,
-                    max_total_cost=max_cost,
+                    provider_keys=self._provider_keys,
+                    **budget_kwargs,
                 )
 
             # Transfer state from PM phase and propagate to nested groups
@@ -809,7 +926,12 @@ class GenerationPipeline:
             raise
 
         finally:
-            pass
+            # Restore previous CACHIBOT_API_KEY env var
+            if self._cachibot_api_key:
+                if _prev_cachibot_key is not None:
+                    _os.environ["CACHIBOT_API_KEY"] = _prev_cachibot_key
+                else:
+                    _os.environ.pop("CACHIBOT_API_KEY", None)
 
     def _write_files_from_tool_calls(self, project_id: str, slug: str, version: int, tool_calls: list[dict]) -> None:
         """Extract files from write_file tool call arguments and write them to disk."""

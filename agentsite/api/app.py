@@ -65,13 +65,23 @@ async def lifespan(app: FastAPI):
     logger.info("AgentSite shutdown")
 
 
-def create_app() -> FastAPI:
-    """Build and configure the FastAPI application."""
+def create_app(
+    custom_lifespan=None,
+    extra_routers=None,
+    extra_middleware=None,
+) -> FastAPI:
+    """Build and configure the FastAPI application.
+
+    Args:
+        custom_lifespan: Replaces the default lifespan (for custom DB init, auth setup).
+        extra_routers: List of APIRouter to include after the default ones.
+        extra_middleware: List of (middleware_class, kwargs) tuples to add.
+    """
     app = FastAPI(
         title="AgentSite",
         description="AI-Powered Website Builder using Prompture",
         version="0.1.0",
-        lifespan=lifespan,
+        lifespan=custom_lifespan or lifespan,
     )
 
     # CORS for local development
@@ -82,6 +92,11 @@ def create_app() -> FastAPI:
         allow_methods=["*"],
         allow_headers=["*"],
     )
+
+    # Extra middleware (added before routes, after CORS)
+    if extra_middleware:
+        for middleware_cls, kwargs in extra_middleware:
+            app.add_middleware(middleware_cls, **kwargs)
 
     # Lightweight health check (no external calls)
     @app.get("/api/health")
@@ -96,6 +111,11 @@ def create_app() -> FastAPI:
     app.include_router(preview.router)
     app.include_router(providers.router)
     app.include_router(agents.router)
+
+    # Extra routers (e.g. auth, landing page)
+    if extra_routers:
+        for router in extra_routers:
+            app.include_router(router)
 
     # Serve frontend static files
     if FRONTEND_DIR.exists():

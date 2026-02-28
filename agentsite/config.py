@@ -28,6 +28,9 @@ class Settings(BaseSettings):
 
     # Budget enforcement (0 = no limit)
     max_generation_cost: float = 0.0
+    budget_policy: str = ""  # "hard_stop", "warn_and_continue", "degrade" (empty = disabled)
+    budget_max_tokens: int = 0  # 0 = no limit
+    budget_fallback_models: list[str] = []  # e.g. ["openai/gpt-4o-mini"]
 
     # Response caching
     cache_enabled: bool = False

@@ -8,6 +8,7 @@ from prompture import AsyncLoopGroup, AsyncSequentialGroup, GroupCallbacks
 from prompture.groups import ParallelGroup
 
 from ..config import settings
+from ..engine.model_resolver import resolve_agent_model
 from ..models import AgentConfig
 from .designer import create_designer_agent_auto
 from .developer import create_developer_agent_auto
@@ -125,6 +126,35 @@ def create_pipeline(
     return pipeline
 
 
+def _apply_budget_to_agent(
+    agent: Any,
+    budget_policy: Any | None = None,
+    fallback_models: list[str] | None = None,
+    max_tokens: int | None = None,
+    on_model_fallback: Any | None = None,
+) -> None:
+    """Apply budget policy parameters to an agent instance."""
+    if budget_policy is not None:
+        agent._budget_policy = budget_policy
+    if fallback_models:
+        agent._fallback_models = fallback_models
+    if max_tokens:
+        agent._max_tokens = max_tokens
+    if on_model_fallback is not None:
+        agent._on_model_fallback = on_model_fallback
+
+
+def _inject_driver_if_needed(agent: Any, model_str: str, provider_keys: dict[str, str] | None) -> None:
+    """Inject a per-project driver into an agent if provider_keys are set."""
+    if not provider_keys:
+        return
+    from ..engine.driver_factory import resolve_driver_for_model
+
+    driver = resolve_driver_for_model(model_str, provider_keys)
+    if driver is not None:
+        agent.driver = driver
+
+
 def create_dynamic_pipeline(
     required_agents: list[str],
     model: str | None = None,
@@ -136,6 +166,11 @@ def create_dynamic_pipeline(
     error_policy: Any = None,
     deps: Any = None,
     max_total_cost: float | None = None,
+    budget_policy: Any | None = None,
+    fallback_models: list[str] | None = None,
+    budget_max_tokens: int | None = None,
+    on_model_fallback: Any | None = None,
+    provider_keys: dict[str, str] | None = None,
 ) -> AsyncSequentialGroup:
     """Build a dynamic pipeline based on PM's required_agents output.
 
@@ -149,6 +184,7 @@ def create_dynamic_pipeline(
         max_review_iterations: Max dev+review cycles.
         review_threshold: Min review score.
         agent_configs: Per-agent config overrides from DB.
+        provider_keys: Per-project provider API keys for driver injection.
     """
     effective_model = model or settings.default_model
     max_iters = max_review_iterations or settings.max_review_iterations
@@ -156,10 +192,20 @@ def create_dynamic_pipeline(
 
     steps: list[Any] = []
 
+    _budget_kw = dict(
+        budget_policy=budget_policy,
+        fallback_models=fallback_models,
+        max_tokens=budget_max_tokens,
+        on_model_fallback=on_model_fallback,
+    )
+
     # Designer (optional) - use auto factory for capability detection
     if "designer" in required_agents:
-        designer = create_designer_agent_auto(_agent_model("designer", effective_model, agent_configs))
+        _dm = _agent_model("designer", effective_model, agent_configs)
+        designer = create_designer_agent_auto(_dm)
         _apply_agent_overrides(designer, "designer", agent_configs)
+        _apply_budget_to_agent(designer, **_budget_kw)
+        _inject_driver_if_needed(designer, _dm, provider_keys)
         steps.append(
             (
                 designer,
@@ -172,13 +218,19 @@ def create_dynamic_pipeline(
         )
 
     # Developer (always required) - use auto factory for capability detection
-    developer = create_developer_agent_auto(_agent_model("developer", effective_model, agent_configs))
+    _dev_m = _agent_model("developer", effective_model, agent_configs)
+    developer = create_developer_agent_auto(_dev_m)
     _apply_agent_overrides(developer, "developer", agent_configs)
+    _apply_budget_to_agent(developer, **_budget_kw)
+    _inject_driver_if_needed(developer, _dev_m, provider_keys)
 
     if "reviewer" in required_agents:
         # Use auto factory for capability detection
-        reviewer = create_reviewer_agent_auto(_agent_model("reviewer", effective_model, agent_configs))
+        _rev_m = _agent_model("reviewer", effective_model, agent_configs)
+        reviewer = create_reviewer_agent_auto(_rev_m)
         _apply_agent_overrides(reviewer, "reviewer", agent_configs)
+        _apply_budget_to_agent(reviewer, **_budget_kw)
+        _inject_driver_if_needed(reviewer, _rev_m, provider_keys)
 
         def _exit_condition(state: dict[str, Any], iteration: int) -> bool:
             feedback_text = state.get("review_feedback", "")
@@ -263,6 +315,11 @@ def create_specialist_pipeline(
     error_policy: Any = None,
     deps: Any = None,
     max_total_cost: float | None = None,
+    budget_policy: Any | None = None,
+    fallback_models: list[str] | None = None,
+    budget_max_tokens: int | None = None,
+    on_model_fallback: Any | None = None,
+    provider_keys: dict[str, str] | None = None,
 ) -> AsyncSequentialGroup:
     """Build a specialist pipeline with parallel execution.
 
@@ -298,12 +355,22 @@ def create_specialist_pipeline(
     max_iters = max_review_iterations or settings.max_review_iterations
     threshold = review_threshold or settings.review_approval_threshold
 
+    _budget_kw = dict(
+        budget_policy=budget_policy,
+        fallback_models=fallback_models,
+        max_tokens=budget_max_tokens,
+        on_model_fallback=on_model_fallback,
+    )
+
     steps: list[Any] = []
 
     # --- Image agent runs FIRST (sequential) so asset-manifest.md exists ---
     if "image" in required_agents:
-        img_agent = create_image_agent(_agent_model("image", effective_model, agent_configs))
+        _img_m = _agent_model("image", effective_model, agent_configs)
+        img_agent = create_image_agent(_img_m)
         _apply_agent_overrides(img_agent, "image", agent_configs)
+        _apply_budget_to_agent(img_agent, **_budget_kw)
+        _inject_driver_if_needed(img_agent, _img_m, provider_keys)
         steps.append(
             (
                 img_agent,
@@ -319,8 +386,11 @@ def create_specialist_pipeline(
     parallel_agents: list[Any] = []
 
     if "markup" in required_agents:
-        markup = create_markup_agent(_agent_model("markup", effective_model, agent_configs))
+        _mk_m = _agent_model("markup", effective_model, agent_configs)
+        markup = create_markup_agent(_mk_m)
         _apply_agent_overrides(markup, "markup", agent_configs)
+        _apply_budget_to_agent(markup, **_budget_kw)
+        _inject_driver_if_needed(markup, _mk_m, provider_keys)
         parallel_agents.append(
             (
                 markup,
@@ -339,8 +409,11 @@ def create_specialist_pipeline(
 
     # Style — pick CSS or SCSS variant
     if "style_scss" in required_agents:
-        style = create_style_scss_agent(_agent_model("style_scss", effective_model, agent_configs))
+        _ss_m = _agent_model("style_scss", effective_model, agent_configs)
+        style = create_style_scss_agent(_ss_m)
         _apply_agent_overrides(style, "style_scss", agent_configs)
+        _apply_budget_to_agent(style, **_budget_kw)
+        _inject_driver_if_needed(style, _ss_m, provider_keys)
         parallel_agents.append(
             (
                 style,
@@ -353,8 +426,11 @@ def create_specialist_pipeline(
             )
         )
     elif "style" in required_agents:
-        style = create_style_agent(_agent_model("style", effective_model, agent_configs))
+        _st_m = _agent_model("style", effective_model, agent_configs)
+        style = create_style_agent(_st_m)
         _apply_agent_overrides(style, "style", agent_configs)
+        _apply_budget_to_agent(style, **_budget_kw)
+        _inject_driver_if_needed(style, _st_m, provider_keys)
         parallel_agents.append(
             (
                 style,
@@ -368,8 +444,11 @@ def create_specialist_pipeline(
         )
 
     if "script" in required_agents:
-        script = create_script_agent(_agent_model("script", effective_model, agent_configs))
+        _sc_m = _agent_model("script", effective_model, agent_configs)
+        script = create_script_agent(_sc_m)
         _apply_agent_overrides(script, "script", agent_configs)
+        _apply_budget_to_agent(script, **_budget_kw)
+        _inject_driver_if_needed(script, _sc_m, provider_keys)
         parallel_agents.append(
             (
                 script,
@@ -404,8 +483,11 @@ def create_specialist_pipeline(
     if has_post_process:
         # Copywriter runs first so SEO can read final copy for meta descriptions
         if "copywriter" in required_agents:
-            cw = create_copywriter_agent(_agent_model("copywriter", effective_model, agent_configs))
+            _cw_m = _agent_model("copywriter", effective_model, agent_configs)
+            cw = create_copywriter_agent(_cw_m)
             _apply_agent_overrides(cw, "copywriter", agent_configs)
+            _apply_budget_to_agent(cw, **_budget_kw)
+            _inject_driver_if_needed(cw, _cw_m, provider_keys)
             post_process_steps.append(
                 (
                     cw,
@@ -422,8 +504,11 @@ def create_specialist_pipeline(
         post_parallel: list[Any] = []
 
         if "seo" in required_agents:
-            seo = create_seo_agent(_agent_model("seo", effective_model, agent_configs))
+            _seo_m = _agent_model("seo", effective_model, agent_configs)
+            seo = create_seo_agent(_seo_m)
             _apply_agent_overrides(seo, "seo", agent_configs)
+            _apply_budget_to_agent(seo, **_budget_kw)
+            _inject_driver_if_needed(seo, _seo_m, provider_keys)
             post_parallel.append(
                 (
                     seo,
@@ -436,8 +521,11 @@ def create_specialist_pipeline(
             )
 
         if "accessibility" in required_agents:
-            a11y = create_accessibility_agent(_agent_model("accessibility", effective_model, agent_configs))
+            _a11y_m = _agent_model("accessibility", effective_model, agent_configs)
+            a11y = create_accessibility_agent(_a11y_m)
             _apply_agent_overrides(a11y, "accessibility", agent_configs)
+            _apply_budget_to_agent(a11y, **_budget_kw)
+            _inject_driver_if_needed(a11y, _a11y_m, provider_keys)
             post_parallel.append(
                 (
                     a11y,
@@ -450,8 +538,11 @@ def create_specialist_pipeline(
             )
 
         if "animation" in required_agents:
-            anim = create_animation_agent(_agent_model("animation", effective_model, agent_configs))
+            _anim_m = _agent_model("animation", effective_model, agent_configs)
+            anim = create_animation_agent(_anim_m)
             _apply_agent_overrides(anim, "animation", agent_configs)
+            _apply_budget_to_agent(anim, **_budget_kw)
+            _inject_driver_if_needed(anim, _anim_m, provider_keys)
             post_parallel.append(
                 (
                     anim,
@@ -475,8 +566,11 @@ def create_specialist_pipeline(
 
     # --- Optionally wrap with reviewer loop ---
     if "reviewer" in required_agents:
-        reviewer = create_reviewer_agent_auto(_agent_model("reviewer", effective_model, agent_configs))
+        _rev_m = _agent_model("reviewer", effective_model, agent_configs)
+        reviewer = create_reviewer_agent_auto(_rev_m)
         _apply_agent_overrides(reviewer, "reviewer", agent_configs)
+        _apply_budget_to_agent(reviewer, **_budget_kw)
+        _inject_driver_if_needed(reviewer, _rev_m, provider_keys)
 
         def _exit_condition(state: dict[str, Any], iteration: int) -> bool:
             feedback_text = state.get("review_feedback", "")
@@ -554,17 +648,13 @@ def _agent_model(
     default_model: str,
     configs: dict[str, AgentConfig] | None,
 ) -> str:
-    """Resolve the model for an agent, respecting config overrides.
+    """Resolve the model for an agent using multi-layer ModelResolver.
 
-    Model strings must be in ``provider/model`` format.  If an agent
-    override doesn't contain a ``/`` it is ignored (treated as invalid)
-    and the default model is used instead.
+    Resolution order (via Prompture ModelResolver):
+    1. Agent-specific override in ``configs`` (if valid provider/model format)
+    2. ``default_model`` (project or request level)
+    3. ``settings.default_model`` (global fallback)
+
+    Falls back to manual resolution if ModelResolver is unavailable.
     """
-    if configs and agent_key in configs:
-        cfg = configs[agent_key]
-        if cfg.model and "/" in cfg.model:
-            return cfg.model
-        elif cfg.model:
-            # Invalid format — skip this override
-            pass
-    return default_model
+    return resolve_agent_model(agent_key, default_model, configs)

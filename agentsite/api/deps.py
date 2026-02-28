@@ -72,3 +72,19 @@ async def get_pm() -> ProjectManager:
 
 async def get_assets() -> AssetHandler:
     return asset_handler
+
+
+def reset():
+    """Clear all singletons so they can be re-initialized."""
+    global db, project_manager, asset_handler
+    global project_repo, page_repo, version_repo
+    global agent_config_repo, agent_run_repo, message_repo
+    db = Database()
+    project_manager = ProjectManager()
+    asset_handler = AssetHandler(project_manager)
+    project_repo = None
+    page_repo = None
+    version_repo = None
+    agent_config_repo = None
+    agent_run_repo = None
+    message_repo = None
