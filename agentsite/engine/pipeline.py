@@ -114,6 +114,39 @@ def _merge_nested_group_state(group: Any) -> None:
                 group._state[k] = v
 
 
+def _build_budget_kwargs(
+    max_cost: float | None,
+    policy: str | None,
+    max_tokens: int | None,
+    fallback_models: list[str] | None,
+    on_fallback: Any | None,
+) -> dict[str, Any]:
+    """Build kwargs dict for budget enforcement on pipeline groups and agents.
+
+    Returns a dict with ``max_total_cost`` (for groups) and
+    ``budget_policy``, ``fallback_models``, ``budget_max_tokens``,
+    ``on_model_fallback`` (for agents via orchestrator).
+    """
+    kwargs: dict[str, Any] = {}
+    if max_cost:
+        kwargs["max_total_cost"] = max_cost
+    if policy:
+        try:
+            from prompture.infra import BudgetPolicy
+
+            kwargs["budget_policy"] = BudgetPolicy(policy)
+        except (ValueError, ImportError):
+            pass
+        else:
+            if max_tokens:
+                kwargs["budget_max_tokens"] = max_tokens
+            if fallback_models:
+                kwargs["fallback_models"] = fallback_models
+            if on_fallback:
+                kwargs["on_model_fallback"] = on_fallback
+    return kwargs
+
+
 class GenerationPipeline:
     """Orchestrates the generation process for a single page version.
 
@@ -154,6 +187,8 @@ class GenerationPipeline:
         slug: str,
         version_number: int,
         page_prompt: str,
+        max_cost: float | None = None,
+        budget_policy: str | None = None,
     ) -> GroupResult:
         """Run the generation pipeline for a single page version.
 
@@ -399,20 +434,34 @@ class GenerationPipeline:
             # Parse required_agents and tech_stack from the PM output
             required_agents = ["designer", "developer", "reviewer"]  # default
             tech_stack = TechStack()
+            site_plan: SitePlan | None = None
             try:
                 from prompture import clean_json_text
 
                 cleaned = clean_json_text(site_plan_text)
                 plan_data = json.loads(cleaned)
                 site_plan = SitePlan.model_validate(plan_data)
+            except Exception:
+                logger.debug("JSON parse of PM output failed, trying extract_with_model fallback")
+                from .extract import extract_structured
+
+                pm_model = self._agent_models.get("pm", model)
+                site_plan = await extract_structured(
+                    SitePlan,
+                    site_plan_text,
+                    pm_model,
+                    instruction="Extract the site plan from this output:",
+                )
+
+            if site_plan is not None:
                 required_agents = site_plan.required_agents
                 tech_stack = site_plan.tech_stack
                 # Ensure at least one build agent is present
                 has_specialists = any(k in required_agents for k in ("markup", "style", "style_scss", "script"))
                 if not has_specialists and "developer" not in required_agents:
                     required_agents.append("developer")
-            except Exception:
-                logger.debug("Could not parse required_agents from PM output, using all agents")
+            else:
+                logger.debug("Could not parse required_agents from PM output, using defaults")
 
             # Filter out agents that are disabled in agent configs (global or project-level)
             if self._agent_configs:
@@ -546,7 +595,25 @@ class GenerationPipeline:
                     initial_state["style_spec"] = StyleSpec().model_dump_json()
 
             # --- Phase C: Build pipeline — specialist (parallel) or legacy (monolithic) ---
-            max_cost = settings.max_generation_cost or None
+            # Build budget kwargs from per-request overrides or global settings
+            effective_max_cost = max_cost if max_cost is not None else (settings.max_generation_cost or None)
+            effective_policy = budget_policy or settings.budget_policy or None
+
+            async def _on_model_fallback(old_model: str, new_model: str, state: Any) -> None:
+                logger.info("Budget policy triggered model fallback: %s -> %s", old_model, new_model)
+                await self._emit(
+                    "model_fallback",
+                    data={"old_model": old_model, "new_model": new_model},
+                )
+
+            budget_kwargs = _build_budget_kwargs(
+                max_cost=effective_max_cost,
+                policy=effective_policy,
+                max_tokens=settings.budget_max_tokens or None,
+                fallback_models=settings.budget_fallback_models or None,
+                on_fallback=_on_model_fallback,
+            )
+
             specialist_keys = {"markup", "style", "style_scss", "script", "image"}
             has_specialists = any(k in remaining_agents for k in specialist_keys)
 
@@ -564,7 +631,7 @@ class GenerationPipeline:
                     agent_configs=self._agent_configs,
                     error_policy=ErrorPolicy.raise_on_error,
                     deps=deps,
-                    max_total_cost=max_cost,
+                    **budget_kwargs,
                 )
             else:
                 remaining_pipeline = create_dynamic_pipeline(
@@ -574,7 +641,7 @@ class GenerationPipeline:
                     agent_configs=self._agent_configs,
                     error_policy=ErrorPolicy.raise_on_error,
                     deps=deps,
-                    max_total_cost=max_cost,
+                    **budget_kwargs,
                 )
 
             # Transfer state from PM phase and propagate to nested groups

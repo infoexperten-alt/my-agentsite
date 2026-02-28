@@ -125,6 +125,24 @@ def create_pipeline(
     return pipeline
 
 
+def _apply_budget_to_agent(
+    agent: Any,
+    budget_policy: Any | None = None,
+    fallback_models: list[str] | None = None,
+    max_tokens: int | None = None,
+    on_model_fallback: Any | None = None,
+) -> None:
+    """Apply budget policy parameters to an agent instance."""
+    if budget_policy is not None:
+        agent._budget_policy = budget_policy
+    if fallback_models:
+        agent._fallback_models = fallback_models
+    if max_tokens:
+        agent._max_tokens = max_tokens
+    if on_model_fallback is not None:
+        agent._on_model_fallback = on_model_fallback
+
+
 def create_dynamic_pipeline(
     required_agents: list[str],
     model: str | None = None,
@@ -136,6 +154,10 @@ def create_dynamic_pipeline(
     error_policy: Any = None,
     deps: Any = None,
     max_total_cost: float | None = None,
+    budget_policy: Any | None = None,
+    fallback_models: list[str] | None = None,
+    budget_max_tokens: int | None = None,
+    on_model_fallback: Any | None = None,
 ) -> AsyncSequentialGroup:
     """Build a dynamic pipeline based on PM's required_agents output.
 
@@ -156,10 +178,18 @@ def create_dynamic_pipeline(
 
     steps: list[Any] = []
 
+    _budget_kw = dict(
+        budget_policy=budget_policy,
+        fallback_models=fallback_models,
+        max_tokens=budget_max_tokens,
+        on_model_fallback=on_model_fallback,
+    )
+
     # Designer (optional) - use auto factory for capability detection
     if "designer" in required_agents:
         designer = create_designer_agent_auto(_agent_model("designer", effective_model, agent_configs))
         _apply_agent_overrides(designer, "designer", agent_configs)
+        _apply_budget_to_agent(designer, **_budget_kw)
         steps.append(
             (
                 designer,
@@ -174,11 +204,13 @@ def create_dynamic_pipeline(
     # Developer (always required) - use auto factory for capability detection
     developer = create_developer_agent_auto(_agent_model("developer", effective_model, agent_configs))
     _apply_agent_overrides(developer, "developer", agent_configs)
+    _apply_budget_to_agent(developer, **_budget_kw)
 
     if "reviewer" in required_agents:
         # Use auto factory for capability detection
         reviewer = create_reviewer_agent_auto(_agent_model("reviewer", effective_model, agent_configs))
         _apply_agent_overrides(reviewer, "reviewer", agent_configs)
+        _apply_budget_to_agent(reviewer, **_budget_kw)
 
         def _exit_condition(state: dict[str, Any], iteration: int) -> bool:
             feedback_text = state.get("review_feedback", "")
@@ -263,6 +295,10 @@ def create_specialist_pipeline(
     error_policy: Any = None,
     deps: Any = None,
     max_total_cost: float | None = None,
+    budget_policy: Any | None = None,
+    fallback_models: list[str] | None = None,
+    budget_max_tokens: int | None = None,
+    on_model_fallback: Any | None = None,
 ) -> AsyncSequentialGroup:
     """Build a specialist pipeline with parallel execution.
 
@@ -298,12 +334,20 @@ def create_specialist_pipeline(
     max_iters = max_review_iterations or settings.max_review_iterations
     threshold = review_threshold or settings.review_approval_threshold
 
+    _budget_kw = dict(
+        budget_policy=budget_policy,
+        fallback_models=fallback_models,
+        max_tokens=budget_max_tokens,
+        on_model_fallback=on_model_fallback,
+    )
+
     steps: list[Any] = []
 
     # --- Image agent runs FIRST (sequential) so asset-manifest.md exists ---
     if "image" in required_agents:
         img_agent = create_image_agent(_agent_model("image", effective_model, agent_configs))
         _apply_agent_overrides(img_agent, "image", agent_configs)
+        _apply_budget_to_agent(img_agent, **_budget_kw)
         steps.append(
             (
                 img_agent,
@@ -321,6 +365,7 @@ def create_specialist_pipeline(
     if "markup" in required_agents:
         markup = create_markup_agent(_agent_model("markup", effective_model, agent_configs))
         _apply_agent_overrides(markup, "markup", agent_configs)
+        _apply_budget_to_agent(markup, **_budget_kw)
         parallel_agents.append(
             (
                 markup,
@@ -341,6 +386,7 @@ def create_specialist_pipeline(
     if "style_scss" in required_agents:
         style = create_style_scss_agent(_agent_model("style_scss", effective_model, agent_configs))
         _apply_agent_overrides(style, "style_scss", agent_configs)
+        _apply_budget_to_agent(style, **_budget_kw)
         parallel_agents.append(
             (
                 style,
@@ -355,6 +401,7 @@ def create_specialist_pipeline(
     elif "style" in required_agents:
         style = create_style_agent(_agent_model("style", effective_model, agent_configs))
         _apply_agent_overrides(style, "style", agent_configs)
+        _apply_budget_to_agent(style, **_budget_kw)
         parallel_agents.append(
             (
                 style,
@@ -370,6 +417,7 @@ def create_specialist_pipeline(
     if "script" in required_agents:
         script = create_script_agent(_agent_model("script", effective_model, agent_configs))
         _apply_agent_overrides(script, "script", agent_configs)
+        _apply_budget_to_agent(script, **_budget_kw)
         parallel_agents.append(
             (
                 script,
@@ -406,6 +454,7 @@ def create_specialist_pipeline(
         if "copywriter" in required_agents:
             cw = create_copywriter_agent(_agent_model("copywriter", effective_model, agent_configs))
             _apply_agent_overrides(cw, "copywriter", agent_configs)
+            _apply_budget_to_agent(cw, **_budget_kw)
             post_process_steps.append(
                 (
                     cw,
@@ -424,6 +473,7 @@ def create_specialist_pipeline(
         if "seo" in required_agents:
             seo = create_seo_agent(_agent_model("seo", effective_model, agent_configs))
             _apply_agent_overrides(seo, "seo", agent_configs)
+            _apply_budget_to_agent(seo, **_budget_kw)
             post_parallel.append(
                 (
                     seo,
@@ -438,6 +488,7 @@ def create_specialist_pipeline(
         if "accessibility" in required_agents:
             a11y = create_accessibility_agent(_agent_model("accessibility", effective_model, agent_configs))
             _apply_agent_overrides(a11y, "accessibility", agent_configs)
+            _apply_budget_to_agent(a11y, **_budget_kw)
             post_parallel.append(
                 (
                     a11y,
@@ -452,6 +503,7 @@ def create_specialist_pipeline(
         if "animation" in required_agents:
             anim = create_animation_agent(_agent_model("animation", effective_model, agent_configs))
             _apply_agent_overrides(anim, "animation", agent_configs)
+            _apply_budget_to_agent(anim, **_budget_kw)
             post_parallel.append(
                 (
                     anim,
@@ -477,6 +529,7 @@ def create_specialist_pipeline(
     if "reviewer" in required_agents:
         reviewer = create_reviewer_agent_auto(_agent_model("reviewer", effective_model, agent_configs))
         _apply_agent_overrides(reviewer, "reviewer", agent_configs)
+        _apply_budget_to_agent(reviewer, **_budget_kw)
 
         def _exit_condition(state: dict[str, Any], iteration: int) -> bool:
             feedback_text = state.get("review_feedback", "")
