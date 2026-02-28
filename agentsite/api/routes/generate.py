@@ -23,6 +23,7 @@ class GenerateRequest(BaseModel):
     agent_models: dict[str, str] | None = None
     max_cost: float | None = None  # per-request budget override
     budget_policy: str | None = None  # per-request policy override
+    provider_keys: dict[str, str] | None = None  # per-request provider key overrides
 
 
 @router.post("/api/projects/{project_id}/pages/{slug}/generate")
@@ -114,8 +115,18 @@ async def start_generation(
                 else:
                     agent_configs[agent_key] = AgentConfigModel(agent_name=agent_key, model=model_str)
 
+    # Merge provider keys: project-level, then request-level overrides
+    provider_keys = dict(project.provider_keys or {})
+    if req.provider_keys:
+        provider_keys.update(req.provider_keys)
+
     # Build pipeline
-    pipeline = GenerationPipeline(pm, on_event=on_event, agent_configs=agent_configs)
+    pipeline = GenerationPipeline(
+        pm,
+        on_event=on_event,
+        agent_configs=agent_configs,
+        provider_keys=provider_keys or None,
+    )
 
     # Import BudgetExceededError for specific handling (falls back to unusable sentinel)
     try:

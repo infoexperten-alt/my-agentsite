@@ -201,6 +201,12 @@ class Project(BaseModel):
         description="Per-project agent overrides keyed by agent name (pm, designer, developer, reviewer). "
         "Each value is a dict with optional keys: model, temperature, system_prompt_override.",
     )
+    provider_keys: dict[str, str] | None = Field(
+        default=None,
+        description="Per-project provider API keys keyed by provider name (openai, claude, google, etc.). "
+        "When set, these override the global environment keys for this project only.",
+    )
+    user_id: str | None = Field(default=None)
     created_at: str = Field(default_factory=lambda: datetime.now(timezone.utc).isoformat())
     updated_at: str = Field(default_factory=lambda: datetime.now(timezone.utc).isoformat())
 
@@ -296,7 +302,13 @@ class WSEvent(BaseModel):
     """WebSocket event sent to the frontend."""
 
     type: str = Field(
-        description="Event type: phase_start, phase_complete, agent_start, agent_complete, error, file_written, generation_complete"
+        description=(
+            "Event type: phase_start, phase_complete, agent_start, agent_complete, "
+            "agent_thinking, agent_step, agent_iteration, agent_output, "
+            "text_delta, tool_start, tool_end, "
+            "error, file_written, generation_complete, "
+            "pipeline_plan, model_fallback, budget_exceeded"
+        )
     )
     agent: str = Field(default="", description="Agent name")
     data: dict = Field(default_factory=dict, description="Event payload")

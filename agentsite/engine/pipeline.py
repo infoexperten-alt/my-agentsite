@@ -50,7 +50,11 @@ def _agent_name_to_key(name: str) -> str:
 
 
 def _attach_streaming_callbacks(group: Any, emit_fn: Any) -> None:
-    """Attach AgentCallbacks for real-time tool start/end events to all agents in a group."""
+    """Attach AgentCallbacks for real-time streaming events to all agents in a group.
+
+    Wires up tool start/end, thinking, step, iteration, and text output
+    callbacks so the frontend receives granular progress via WebSocket.
+    """
     try:
         from prompture import AgentCallbacks
     except ImportError:
@@ -83,12 +87,27 @@ def _attach_streaming_callbacks(group: Any, emit_fn: Any) -> None:
             async def _on_iteration(idx: int, *, _key: str = agent_key) -> None:
                 await emit_fn("agent_iteration", agent=_key, data={"iteration": idx})
 
+            async def _on_message(text: str, *, _key: str = agent_key) -> None:
+                """Emit agent text output as a text_delta event for real-time display."""
+                if text:
+                    await emit_fn("text_delta", agent=_key, data={"text": text[:4000]})
+
+            async def _on_output(result: Any, *, _key: str = agent_key) -> None:
+                """Emit structured output preview when agent produces final result."""
+                output_text = getattr(result, "output_text", "") or ""
+                if output_text:
+                    await emit_fn("agent_output", agent=_key, data={
+                        "text": output_text[:2000],
+                    })
+
             agent.callbacks = AgentCallbacks(
                 on_tool_start=_on_tool_start,
                 on_tool_end=_on_tool_end,
                 on_thinking=_on_thinking,
                 on_step=_on_step,
                 on_iteration=_on_iteration,
+                on_message=_on_message,
+                on_output=_on_output,
             )
 
 
@@ -160,10 +179,14 @@ class GenerationPipeline:
         *,
         on_event: Callable[[WSEvent], None] | None = None,
         agent_configs: dict[str, AgentConfig] | None = None,
+        cachibot_api_key: str | None = None,
+        provider_keys: dict[str, str] | None = None,
     ) -> None:
         self._pm = project_manager
         self._on_event = on_event
         self._agent_configs = agent_configs
+        self._cachibot_api_key = cachibot_api_key
+        self._provider_keys = provider_keys
         self.agent_runs: list[AgentRun] = []
         self._active_runs: dict[str, AgentRun] = {}
         self._run_start_times: dict[str, float] = {}
@@ -172,6 +195,22 @@ class GenerationPipeline:
         self._agent_models: dict[str, str] = {}  # agent_key -> resolved model name
         self.site_plan_text: str = ""  # raw PM output for guide persistence
         self.style_spec_text: str = ""  # raw Designer output for project persistence
+
+    def _inject_driver(self, agent: Any, model_str: str) -> None:
+        """Inject a per-project driver into an agent if provider_keys are set.
+
+        Uses the driver factory to build a custom driver with per-project
+        API keys, so this project's generation uses its own credentials.
+        """
+        if not self._provider_keys:
+            return
+
+        from .driver_factory import resolve_driver_for_model
+
+        driver = resolve_driver_for_model(model_str, self._provider_keys)
+        if driver is not None:
+            agent.driver = driver
+            logger.debug("Injected per-project driver for %s (model=%s)", agent.name, model_str)
 
     async def _emit(self, event_type: str, agent: str = "", data: dict[str, Any] | None = None) -> None:
         """Fire a WebSocket event if a callback is registered."""
@@ -393,6 +432,13 @@ class GenerationPipeline:
 
         session_id = f"gen-{project.id}-{slug}-v{version_number}"
 
+        # Inject per-user CachiBot API key into env for this generation
+        import os as _os
+
+        _prev_cachibot_key = _os.environ.get("CACHIBOT_API_KEY")
+        if self._cachibot_api_key:
+            _os.environ["CACHIBOT_API_KEY"] = self._cachibot_api_key
+
         try:
             # --- Resolve model for each agent and store for WS events ---
             from ..agents.pm import create_pm_agent_auto
@@ -405,6 +451,7 @@ class GenerationPipeline:
             # Use auto factory to select structured/plain mode based on capabilities
             pm_agent = create_pm_agent_auto(pm_model)
             _apply_agent_overrides(pm_agent, "pm", self._agent_configs)
+            self._inject_driver(pm_agent, pm_model)
 
             pm_callbacks = GroupCallbacks(
                 on_agent_start=_on_agent_start,
@@ -547,6 +594,7 @@ class GenerationPipeline:
                 # Use auto factory to select structured/plain mode based on capabilities
                 designer_agent = create_designer_agent_auto(designer_model)
                 _apply_agent_overrides(designer_agent, "designer", self._agent_configs)
+                self._inject_driver(designer_agent, designer_model)
                 designer_prompt = (
                     "Design a visual style for this website:\n\n"
                     f"Site Plan: {site_plan_text}\n\n"
@@ -631,6 +679,7 @@ class GenerationPipeline:
                     agent_configs=self._agent_configs,
                     error_policy=ErrorPolicy.raise_on_error,
                     deps=deps,
+                    provider_keys=self._provider_keys,
                     **budget_kwargs,
                 )
             else:
@@ -641,6 +690,7 @@ class GenerationPipeline:
                     agent_configs=self._agent_configs,
                     error_policy=ErrorPolicy.raise_on_error,
                     deps=deps,
+                    provider_keys=self._provider_keys,
                     **budget_kwargs,
                 )
 
@@ -876,7 +926,12 @@ class GenerationPipeline:
             raise
 
         finally:
-            pass
+            # Restore previous CACHIBOT_API_KEY env var
+            if self._cachibot_api_key:
+                if _prev_cachibot_key is not None:
+                    _os.environ["CACHIBOT_API_KEY"] = _prev_cachibot_key
+                else:
+                    _os.environ.pop("CACHIBOT_API_KEY", None)
 
     def _write_files_from_tool_calls(self, project_id: str, slug: str, version: int, tool_calls: list[dict]) -> None:
         """Extract files from write_file tool call arguments and write them to disk."""

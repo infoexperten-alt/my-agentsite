@@ -179,6 +179,18 @@ class Database:
             await self._conn.execute("ALTER TABLE projects ADD COLUMN agent_overrides TEXT")
             await self._conn.commit()
 
+        # Add user_id column to projects table if missing
+        if columns and "user_id" not in columns:
+            logger.info("Adding 'user_id' column to projects table...")
+            await self._conn.execute("ALTER TABLE projects ADD COLUMN user_id TEXT")
+            await self._conn.commit()
+
+        # Add user_id column to agent_runs table if missing
+        if ar_columns and "user_id" not in ar_columns:
+            logger.info("Adding 'user_id' column to agent_runs table...")
+            await self._conn.execute("ALTER TABLE agent_runs ADD COLUMN user_id TEXT")
+            await self._conn.commit()
+
         # Add category column to agent_configs table if missing
         cursor = await self._conn.execute("PRAGMA table_info(agent_configs)")
         ac_columns = {row[1] for row in await cursor.fetchall()}

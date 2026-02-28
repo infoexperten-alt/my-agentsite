@@ -21,7 +21,13 @@ def cli():
 @click.option("--host", default=None, help="Server host (default: from settings)")
 @click.option("--port", default=None, type=int, help="Server port (default: from settings)")
 @click.option("--reload", is_flag=True, help="Enable auto-reload for development")
-def serve(host: str | None, port: int | None, reload: bool):
+@click.option(
+    "--app",
+    "app_factory",
+    default="agentsite.api.app:create_app",
+    help="Custom app factory (module:function) for cloud/custom deployments",
+)
+def serve(host: str | None, port: int | None, reload: bool, app_factory: str):
     """Start the AgentSite web UI server."""
     import uvicorn
 
@@ -30,7 +36,7 @@ def serve(host: str | None, port: int | None, reload: bool):
 
     init_prompture()
     uvicorn.run(
-        "agentsite.api.app:create_app",
+        app_factory,
         factory=True,
         host=host or settings.host,
         port=port or settings.port,

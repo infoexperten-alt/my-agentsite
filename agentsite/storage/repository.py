@@ -19,8 +19,8 @@ class ProjectRepository:
     async def create(self, project: Project) -> Project:
         """Insert a new project."""
         await self._db.conn.execute(
-            """INSERT INTO projects (id, name, description, model, style_spec, agent_overrides, created_at, updated_at)
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
+            """INSERT INTO projects (id, name, description, model, style_spec, agent_overrides, user_id, created_at, updated_at)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
             (
                 project.id,
                 project.name,
@@ -28,6 +28,7 @@ class ProjectRepository:
                 project.model,
                 project.style_spec.model_dump_json() if project.style_spec else None,
                 json.dumps(project.agent_overrides) if project.agent_overrides else None,
+                project.user_id,
                 project.created_at,
                 project.updated_at,
             ),
@@ -35,41 +36,72 @@ class ProjectRepository:
         await self._db.conn.commit()
         return project
 
-    async def get(self, project_id: str) -> Project | None:
-        """Fetch a project by ID."""
-        cursor = await self._db.conn.execute("SELECT * FROM projects WHERE id = ?", (project_id,))
+    async def get(self, project_id: str, *, user_id: str | None = None) -> Project | None:
+        """Fetch a project by ID, optionally scoped to a user."""
+        if user_id is not None:
+            cursor = await self._db.conn.execute(
+                "SELECT * FROM projects WHERE id = ? AND user_id = ?", (project_id, user_id)
+            )
+        else:
+            cursor = await self._db.conn.execute("SELECT * FROM projects WHERE id = ?", (project_id,))
         row = await cursor.fetchone()
         if row is None:
             return None
         return self._row_to_project(row)
 
-    async def list_all(self) -> list[Project]:
-        """Fetch all projects ordered by creation date."""
-        cursor = await self._db.conn.execute("SELECT * FROM projects ORDER BY created_at DESC")
+    async def list_all(self, *, user_id: str | None = None) -> list[Project]:
+        """Fetch all projects ordered by creation date, optionally scoped to a user."""
+        if user_id is not None:
+            cursor = await self._db.conn.execute(
+                "SELECT * FROM projects WHERE user_id = ? ORDER BY created_at DESC", (user_id,)
+            )
+        else:
+            cursor = await self._db.conn.execute("SELECT * FROM projects ORDER BY created_at DESC")
         rows = await cursor.fetchall()
         return [self._row_to_project(row) for row in rows]
 
-    async def update(self, project: Project) -> None:
-        """Update an existing project."""
+    async def update(self, project: Project, *, user_id: str | None = None) -> None:
+        """Update an existing project, optionally scoped to a user."""
         project.updated_at = datetime.now(timezone.utc).isoformat()
-        await self._db.conn.execute(
-            """UPDATE projects SET name=?, description=?, model=?, style_spec=?,
-               agent_overrides=?, updated_at=? WHERE id=?""",
-            (
-                project.name,
-                project.description,
-                project.model,
-                project.style_spec.model_dump_json() if project.style_spec else None,
-                json.dumps(project.agent_overrides) if project.agent_overrides else None,
-                project.updated_at,
-                project.id,
-            ),
-        )
+        if user_id is not None:
+            await self._db.conn.execute(
+                """UPDATE projects SET name=?, description=?, model=?, style_spec=?,
+                   agent_overrides=?, updated_at=? WHERE id=? AND user_id=?""",
+                (
+                    project.name,
+                    project.description,
+                    project.model,
+                    project.style_spec.model_dump_json() if project.style_spec else None,
+                    json.dumps(project.agent_overrides) if project.agent_overrides else None,
+                    project.updated_at,
+                    project.id,
+                    user_id,
+                ),
+            )
+        else:
+            await self._db.conn.execute(
+                """UPDATE projects SET name=?, description=?, model=?, style_spec=?,
+                   agent_overrides=?, updated_at=? WHERE id=?""",
+                (
+                    project.name,
+                    project.description,
+                    project.model,
+                    project.style_spec.model_dump_json() if project.style_spec else None,
+                    json.dumps(project.agent_overrides) if project.agent_overrides else None,
+                    project.updated_at,
+                    project.id,
+                ),
+            )
         await self._db.conn.commit()
 
-    async def delete(self, project_id: str) -> None:
-        """Delete a project and all its pages/versions (via CASCADE)."""
-        await self._db.conn.execute("DELETE FROM projects WHERE id = ?", (project_id,))
+    async def delete(self, project_id: str, *, user_id: str | None = None) -> None:
+        """Delete a project and all its pages/versions (via CASCADE), optionally scoped to a user."""
+        if user_id is not None:
+            await self._db.conn.execute(
+                "DELETE FROM projects WHERE id = ? AND user_id = ?", (project_id, user_id)
+            )
+        else:
+            await self._db.conn.execute("DELETE FROM projects WHERE id = ?", (project_id,))
         await self._db.conn.commit()
 
     @staticmethod
@@ -87,6 +119,12 @@ class ProjectRepository:
         except (KeyError, IndexError):
             pass  # column may not exist in old DBs before migration runs
 
+        user_id = None
+        try:
+            user_id = row["user_id"]
+        except (KeyError, IndexError):
+            pass  # column may not exist in old DBs before migration runs
+
         return Project(
             id=row["id"],
             name=row["name"],
@@ -94,6 +132,7 @@ class ProjectRepository:
             model=row["model"],
             style_spec=style_spec,
             agent_overrides=agent_overrides,
+            user_id=user_id,
             created_at=row["created_at"],
             updated_at=row["updated_at"],
         )
@@ -403,14 +442,14 @@ class AgentRunRepository:
     def __init__(self, db: Database) -> None:
         self._db = db
 
-    async def create(self, run: AgentRun) -> AgentRun:
-        """Insert a new agent run."""
+    async def create(self, run: AgentRun, *, user_id: str | None = None) -> AgentRun:
+        """Insert a new agent run, optionally tagged with a user_id."""
         await self._db.conn.execute(
             """INSERT INTO agent_runs
                (id, project_id, page_slug, version, agent_name, status,
                 started_at, completed_at, input_tokens, output_tokens, cost,
-                session_id, output_summary)
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                session_id, output_summary, user_id)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
             (
                 run.id,
                 run.project_id,
@@ -425,6 +464,7 @@ class AgentRunRepository:
                 run.cost,
                 run.session_id,
                 json.dumps(run.output_summary),
+                user_id,
             ),
         )
         await self._db.conn.commit()
@@ -448,27 +488,36 @@ class AgentRunRepository:
         )
         await self._db.conn.commit()
 
-    async def list_recent(self, limit: int = 50, since: str | None = None) -> list[AgentRun]:
-        """List recent agent runs ordered by start time."""
+    async def list_recent(
+        self, limit: int = 50, since: str | None = None, *, user_id: str | None = None
+    ) -> list[AgentRun]:
+        """List recent agent runs ordered by start time, optionally scoped to a user."""
+        clauses = []
+        params: list = []
         if since:
-            cursor = await self._db.conn.execute(
-                "SELECT * FROM agent_runs WHERE started_at >= ? ORDER BY started_at DESC LIMIT ?",
-                (since, limit),
-            )
-        else:
-            cursor = await self._db.conn.execute(
-                "SELECT * FROM agent_runs ORDER BY started_at DESC LIMIT ?", (limit,)
-            )
+            clauses.append("started_at >= ?")
+            params.append(since)
+        if user_id is not None:
+            clauses.append("user_id = ?")
+            params.append(user_id)
+        where = ("WHERE " + " AND ".join(clauses)) if clauses else ""
+        cursor = await self._db.conn.execute(
+            f"SELECT * FROM agent_runs {where} ORDER BY started_at DESC LIMIT ?",
+            (*params, limit),
+        )
         rows = await cursor.fetchall()
         return [self._row_to_run(row) for row in rows]
 
-    async def get_stats(self, since: str | None = None) -> dict:
-        """Get aggregated agent stats, optionally filtered by start date."""
+    async def get_stats(self, since: str | None = None, *, user_id: str | None = None) -> dict:
+        """Get aggregated agent stats, optionally filtered by start date and user."""
         where = "WHERE status = 'completed'"
         params: list = []
         if since:
             where += " AND started_at >= ?"
             params.append(since)
+        if user_id is not None:
+            where += " AND user_id = ?"
+            params.append(user_id)
 
         cursor = await self._db.conn.execute(
             f"""
@@ -520,21 +569,26 @@ class AgentRunRepository:
             "per_agent": per_agent,
         }
 
-    async def get_daily_stats(self, days: int = 30) -> list[dict]:
-        """Get daily token and cost aggregates for the last N days."""
+    async def get_daily_stats(self, days: int = 30, *, user_id: str | None = None) -> list[dict]:
+        """Get daily token and cost aggregates for the last N days, optionally scoped to a user."""
+        where = "WHERE started_at >= DATE('now', ?)"
+        params: list = [f"-{days} days"]
+        if user_id is not None:
+            where += " AND user_id = ?"
+            params.append(user_id)
         cursor = await self._db.conn.execute(
-            """
+            f"""
             SELECT
                 DATE(started_at) as date,
                 SUM(input_tokens) as input_tokens,
                 SUM(output_tokens) as output_tokens,
                 SUM(cost) as cost
             FROM agent_runs
-            WHERE started_at >= DATE('now', ?)
+            {where}
             GROUP BY DATE(started_at)
             ORDER BY date ASC
         """,
-            (f"-{days} days",),
+            params,
         )
         rows = await cursor.fetchall()
         return [
