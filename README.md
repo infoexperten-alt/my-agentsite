@@ -187,30 +187,38 @@ cd frontend && npm run dev
 Use AgentSite as a library inside any Python application — no server, database, or frontend required. Two async functions expose the full pipeline:
 
 ```python
+import asyncio
+import os
+from pathlib import Path
+
 from agentsite import generate_website, regenerate_page, GenerationConfig
 
-# Generate a site from a prompt
-result = await generate_website(
-    "A dark portfolio site with projects and contact page",
-    output_dir=Path("./websites"),
-    config=GenerationConfig(
-        model="openai/gpt-4o",
-        provider_keys={"openai": os.environ["OPENAI_API_KEY"]},
-        max_cost=0.50,
-    ),
-    on_event=lambda e: print(f"{e.agent}: {e.type}"),
-)
+async def main():
+    # Generate a site from a prompt
+    result = await generate_website(
+        "A dark portfolio site with projects and contact page",
+        output_dir=Path("./websites"),
+        config=GenerationConfig(
+            model="openai/gpt-4o",
+            provider_keys={"openai": os.environ["OPENAI_API_KEY"]},
+            max_cost=0.50,
+        ),
+        on_event=lambda e: print(f"{e.agent}: {e.type}"),
+    )
 
-for path, html in result.files_content.items():
-    print(f"{path}: {len(html)} bytes")
+    for path, html in result.files_content.items():
+        print(f"{path}: {len(html)} bytes")
 
-# Iterate on the same project with new feedback
-v2 = await regenerate_page(
-    "Make the hero section taller and add a testimonials page",
-    output_dir=Path("./websites"),
-    project_id=result.project_id,
-    config=GenerationConfig(model="openai/gpt-4o"),
-)
+    # Iterate on the same project with new feedback
+    v2 = await regenerate_page(
+        "Make the hero section taller and add a testimonials page",
+        output_dir=Path("./websites"),
+        project_id=result.project_id,
+        config=GenerationConfig(model="openai/gpt-4o"),
+    )
+
+if __name__ == "__main__":
+    asyncio.run(main())
 ```
 
 ### API
@@ -233,6 +241,10 @@ v2 = await regenerate_page(
 | `style_spec` | `StyleSpec \| None` | `None` | Pre-defined design tokens |
 | `logo_url` | `str` | `""` | Logo URL for the site |
 | `icon_url` | `str` | `""` | Favicon URL |
+| `max_review_iterations` | `int \| None` | `None` | Maximum review/fix cycles per page. `None` uses the pipeline default. |
+| `review_threshold` | `int \| None` | `None` | Minimum review score to accept a page. `None` uses the pipeline default. |
+| `cancel_event` | `asyncio.Event \| None` | `None` | Cooperative cancellation flag. Set the event to abort generation between phases. |
+| `conversation_context` | `str` | `""` | Extra context prepended to the prompt (e.g., prior conversation history). |
 
 ### GenerationResult
 
@@ -274,6 +286,7 @@ v2 = await regenerate_page(
 Prompts and agent responses are auto-persisted to `messages.json` on disk. Use `load_project` to restore the full conversation thread days later:
 
 ```python
+from pathlib import Path
 from agentsite import generate_website, load_project, GenerationConfig
 
 # Day 1: generate a site

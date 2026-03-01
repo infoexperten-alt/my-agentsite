@@ -791,6 +791,18 @@ class GenerationPipeline:
                     success=False,
                 )
 
+            # --- Cancellation check after build/review pipeline ---
+            if cancel_event and cancel_event.is_set():
+                await self._emit("generation_complete", data={
+                    "success": False, "slug": slug, "version": version_number,
+                    "files": [], "error": "Cancelled by host",
+                })
+                return GroupResult(
+                    agent_results=[], aggregate_usage={},
+                    shared_state={}, elapsed_ms=0, timeline=[], errors=[],
+                    success=False,
+                )
+
             # Merge nested group state back so we can access page_output
             _merge_nested_group_state(remaining_pipeline)
 
