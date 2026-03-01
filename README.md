@@ -37,6 +37,7 @@ Under the hood, the pipeline enforces **quality gates**. The Reviewer agent scor
 - [Features](#features)
 - [CLI Reference](#cli-reference)
 - [Web UI](#web-ui)
+- [Embeddable Component](#embeddable-component)
 - [Configuration](#configuration)
 - [Project Structure](#project-structure)
 - [Tech Stack](#tech-stack)
@@ -181,6 +182,126 @@ cd frontend && npm run dev
 
 ---
 
+## Embeddable Component
+
+Use AgentSite as a library inside any Python application — no server, database, or frontend required. Two async functions expose the full pipeline:
+
+```python
+from agentsite import generate_website, regenerate_page, GenerationConfig
+
+# Generate a site from a prompt
+result = await generate_website(
+    "A dark portfolio site with projects and contact page",
+    output_dir=Path("./websites"),
+    config=GenerationConfig(
+        model="openai/gpt-4o",
+        provider_keys={"openai": os.environ["OPENAI_API_KEY"]},
+        max_cost=0.50,
+    ),
+    on_event=lambda e: print(f"{e.agent}: {e.type}"),
+)
+
+for path, html in result.files_content.items():
+    print(f"{path}: {len(html)} bytes")
+
+# Iterate on the same project with new feedback
+v2 = await regenerate_page(
+    "Make the hero section taller and add a testimonials page",
+    output_dir=Path("./websites"),
+    project_id=result.project_id,
+    config=GenerationConfig(model="openai/gpt-4o"),
+)
+```
+
+### API
+
+| Function | Description |
+| --- | --- |
+| `generate_website(prompt, *, output_dir, config, on_event, project_name, slug)` | One-shot generation. Creates a project, runs the full pipeline, writes files to `output_dir`. |
+| `regenerate_page(prompt, *, output_dir, project_id, slug, version, config, on_event)` | Iterate on an existing project. Auto-detects next version number and preserves the StyleSpec from prior runs. |
+| `load_project(output_dir, project_id)` | Restore a project's full state from disk — metadata, conversation history, site plan, and latest page files. Returns `None` if not found. |
+
+### GenerationConfig
+
+| Field | Type | Default | Description |
+| --- | --- | --- | --- |
+| `model` | `str` | `"openai/gpt-4o"` | LLM model to use |
+| `max_cost` | `float \| None` | `None` | Budget cap in USD |
+| `budget_policy` | `str \| None` | `None` | Budget enforcement policy |
+| `provider_keys` | `dict[str, str] \| None` | `None` | API keys per provider |
+| `agent_configs` | `dict[str, AgentConfig] \| None` | `None` | Per-agent overrides |
+| `style_spec` | `StyleSpec \| None` | `None` | Pre-defined design tokens |
+| `logo_url` | `str` | `""` | Logo URL for the site |
+| `icon_url` | `str` | `""` | Favicon URL |
+
+### GenerationResult
+
+| Field | Type | Description |
+| --- | --- | --- |
+| `project_id` | `str` | Unique project identifier |
+| `files` | `list[str]` | List of generated file paths |
+| `files_content` | `dict[str, str]` | File path → content mapping |
+| `output_dir` | `Path` | Directory where files were written |
+| `usage` | `dict` | Aggregate token/cost usage |
+| `agent_runs` | `list[dict]` | Per-agent run data |
+| `style_spec` | `StyleSpec \| None` | Parsed design spec (auto-saved for reuse) |
+| `success` | `bool` | Whether generation completed |
+| `error` | `str \| None` | Error message if failed |
+
+### ProjectState
+
+| Field | Type | Description |
+| --- | --- | --- |
+| `project_id` | `str` | Unique project identifier |
+| `name` | `str` | Project name |
+| `model` | `str` | LLM model used |
+| `style_spec` | `StyleSpec \| None` | Design tokens from the Designer agent |
+| `site_plan_raw` | `str` | Raw site plan JSON |
+| `pages` | `list[PageState]` | Latest version of each page with files |
+| `messages` | `list[ConversationMessage]` | Full conversation history |
+
+### ConversationMessage
+
+| Field | Type | Description |
+| --- | --- | --- |
+| `role` | `str` | `"user"` or `"assistant"` |
+| `content` | `str` | Human-readable message text |
+| `timestamp` | `str` | ISO 8601 UTC timestamp |
+| `meta` | `dict` | Structured data (slug, version, files, action, etc.) |
+
+### Conversation Persistence
+
+Prompts and agent responses are auto-persisted to `messages.json` on disk. Use `load_project` to restore the full conversation thread days later:
+
+```python
+from agentsite import generate_website, load_project, GenerationConfig
+
+# Day 1: generate a site
+result = await generate_website(
+    "A dark portfolio site",
+    output_dir=Path("./websites"),
+    config=GenerationConfig(model="openai/gpt-4o"),
+)
+project_id = result.project_id  # save this
+
+# Day 4: restore everything and continue
+state = load_project(Path("./websites"), project_id)
+print(state.messages)    # full conversation history
+print(state.pages)       # latest files per page
+print(state.style_spec)  # design tokens ready to reuse
+```
+
+### Design Notes
+
+- **No database** — files and metadata live on disk via `ProjectManager`
+- **No server** — direct async function calls, runs in-process
+- **StyleSpec auto-persisted** — after generation, the designer's output is saved to `project.json` so `regenerate_page` picks up the brand
+- **Error recovery** — budget exceeded and pipeline failures still return partial files if any were written
+- **Conversation auto-persisted** — user prompts and agent responses are saved to `messages.json` for session restoration via `load_project`
+- **Sync/async callbacks** — `on_event` accepts either sync or async functions
+
+---
+
 ## Configuration
 
 | Variable | Description | Default |
@@ -208,6 +329,7 @@ agentsite/
     websocket.py     # WebSocket manager for real-time progress
   engine/            # Core generation logic
     pipeline.py      # Orchestrates agents, handles file output and events
+    component.py     # Embeddable API (generate_website, regenerate_page)
   storage/           # Persistence layer
     database.py      # Async SQLite via aiosqlite
     repository.py    # CRUD operations for projects and generations

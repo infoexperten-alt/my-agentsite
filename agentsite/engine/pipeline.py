@@ -19,7 +19,7 @@ from ..agents.orchestrator import (
     create_specialist_pipeline,
 )
 from ..config import settings
-from ..models import AgentConfig, AgentRun, PageOutput, Project, SitePlan, StyleSpec, TechStack, WSEvent
+from ..models import AgentConfig, AgentRun, PageOutput, Project, ReviewFeedback, SitePlan, StyleSpec, TechStack, WSEvent
 from .project_manager import ProjectManager
 from .reasoning_patch import apply_reasoning_patch
 
@@ -228,6 +228,10 @@ class GenerationPipeline:
         page_prompt: str,
         max_cost: float | None = None,
         budget_policy: str | None = None,
+        max_review_iterations: int | None = None,
+        review_threshold: int | None = None,
+        cancel_event: asyncio.Event | None = None,
+        conversation_context: str = "",
     ) -> GroupResult:
         """Run the generation pipeline for a single page version.
 
@@ -322,6 +326,22 @@ class GenerationPipeline:
                         or usage.get("total_cost", 0.0)  # backwards compat
                         or 0.0
                     )
+
+            # Emit review_feedback when reviewer completes
+            if agent_key == "reviewer" and output_text:
+                try:
+                    from prompture import clean_json_text as _cjt2
+                    _rfb_data = json.loads(_cjt2(output_text))
+                    _rfb = ReviewFeedback.model_validate(_rfb_data) if isinstance(_rfb_data, dict) else None
+                except Exception:
+                    _rfb = None
+                if _rfb is not None:
+                    await self._emit("review_feedback", data={
+                        "score": _rfb.score,
+                        "approved": _rfb.approved,
+                        "issues": _rfb.issues,
+                        "suggestions": _rfb.suggestions,
+                    })
 
             # Capture developer/specialist output for fallback extraction
             _build_agents = {"developer", "markup", "style", "style_scss", "script"}
@@ -503,6 +523,14 @@ class GenerationPipeline:
             if site_plan is not None:
                 required_agents = site_plan.required_agents
                 tech_stack = site_plan.tech_stack
+
+                # Emit site_plan_ready so hosts can inspect structure before design/dev
+                await self._emit("site_plan_ready", data={
+                    "site_plan": site_plan.model_dump(),
+                    "required_agents": required_agents,
+                    "tech_stack": tech_stack.model_dump(),
+                })
+
                 # Ensure at least one build agent is present
                 has_specialists = any(k in required_agents for k in ("markup", "style", "style_scss", "script"))
                 if not has_specialists and "developer" not in required_agents:
@@ -568,6 +596,18 @@ class GenerationPipeline:
                 "tech_stack": tech_stack.model_dump(),
             })
 
+            # --- Cancellation check after PM ---
+            if cancel_event and cancel_event.is_set():
+                await self._emit("generation_complete", data={
+                    "success": False, "slug": slug, "version": version_number,
+                    "files": [], "error": "Cancelled by host",
+                })
+                return GroupResult(
+                    agent_results=[], aggregate_usage={},
+                    shared_state={}, elapsed_ms=0, timeline=[], errors=[],
+                    success=False,
+                )
+
             # --- Load existing guides for template injection ---
             design_system_guide = self._pm.read_guide(project.id, "design-system.md") or ""
             architecture_guide = self._pm.read_guide(project.id, "architecture.md") or ""
@@ -585,6 +625,7 @@ class GenerationPipeline:
                 "design_system_guide": design_system_guide,
                 "architecture_guide": architecture_guide,
                 "tech_stack": tech_stack.model_dump_json(),
+                "conversation_context": conversation_context,
             }
 
             if "designer" in required_agents:
@@ -622,6 +663,20 @@ class GenerationPipeline:
                 style_spec_text = designer_result.shared_state.get("style_spec", "")
                 self.style_spec_text = style_spec_text
 
+                # Emit style_spec_ready so hosts can preview design before dev starts
+                _style_parsed = False
+                if style_spec_text:
+                    try:
+                        from prompture import clean_json_text as _cjt
+                        json.loads(_cjt(style_spec_text))
+                        _style_parsed = True
+                    except Exception:
+                        pass
+                await self._emit("style_spec_ready", data={
+                    "style_spec": style_spec_text,
+                    "parsed": _style_parsed,
+                })
+
                 initial_state["style_spec"] = style_spec_text
 
                 # Merge designer usage into pm_result for later aggregation
@@ -641,6 +696,18 @@ class GenerationPipeline:
                     initial_state["style_spec"] = project.style_spec.model_dump_json()
                 else:
                     initial_state["style_spec"] = StyleSpec().model_dump_json()
+
+            # --- Cancellation check after Designer ---
+            if cancel_event and cancel_event.is_set():
+                await self._emit("generation_complete", data={
+                    "success": False, "slug": slug, "version": version_number,
+                    "files": [], "error": "Cancelled by host",
+                })
+                return GroupResult(
+                    agent_results=[], aggregate_usage={},
+                    shared_state={}, elapsed_ms=0, timeline=[], errors=[],
+                    success=False,
+                )
 
             # --- Phase C: Build pipeline — specialist (parallel) or legacy (monolithic) ---
             # Build budget kwargs from per-request overrides or global settings
@@ -680,6 +747,8 @@ class GenerationPipeline:
                     error_policy=ErrorPolicy.raise_on_error,
                     deps=deps,
                     provider_keys=self._provider_keys,
+                    max_review_iterations=max_review_iterations,
+                    review_threshold=review_threshold,
                     **budget_kwargs,
                 )
             else:
@@ -691,6 +760,8 @@ class GenerationPipeline:
                     error_policy=ErrorPolicy.raise_on_error,
                     deps=deps,
                     provider_keys=self._provider_keys,
+                    max_review_iterations=max_review_iterations,
+                    review_threshold=review_threshold,
                     **budget_kwargs,
                 )
 

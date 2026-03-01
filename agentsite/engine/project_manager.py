@@ -3,9 +3,11 @@
 from __future__ import annotations
 
 import io
+import json
 import shutil
 import zipfile
 from pathlib import Path
+from typing import Any
 
 from ..config import settings
 from ..models import Project
@@ -18,7 +20,9 @@ class ProjectManager:
 
         {base}/{project_id}/
         ├── project.json
+        ├── messages.json
         ├── assets/
+        ├── guides/
         └── pages/
             ├── home/
             │   ├── v1/
@@ -178,6 +182,29 @@ class ProjectManager:
         if not gdir.exists():
             return []
         return sorted(f.name for f in gdir.iterdir() if f.is_file())
+
+    # -- Messages (conversation history) --
+
+    def _messages_path(self, project_id: str) -> Path:
+        return self.project_dir(project_id) / "messages.json"
+
+    def append_message(self, project_id: str, message: object) -> None:
+        """Append a ConversationMessage (dataclass) to messages.json."""
+        import dataclasses
+
+        path = self._messages_path(project_id)
+        messages: list[dict[str, Any]] = []
+        if path.exists():
+            messages = json.loads(path.read_text(encoding="utf-8"))
+        messages.append(dataclasses.asdict(message))
+        path.write_text(json.dumps(messages, indent=2), encoding="utf-8")
+
+    def load_messages(self, project_id: str) -> list[dict[str, Any]]:
+        """Load conversation messages from disk. Returns [] if file is missing."""
+        path = self._messages_path(project_id)
+        if not path.exists():
+            return []
+        return json.loads(path.read_text(encoding="utf-8"))
 
     # -- Export --
 
