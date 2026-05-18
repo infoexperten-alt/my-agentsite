@@ -448,6 +448,11 @@ class GenerationPipeline:
             "on_asset_created": _on_asset_created,
             "written_files": written_files,
         }
+        # Phase 3 — pre-flight gate state. write_file checks
+        # `_preflight_required`; read_guide records into `_preflight_read`.
+        if settings.preflight_enabled and settings.preflight_required_guides:
+            deps["_preflight_required"] = set(settings.preflight_required_guides)
+            deps["_preflight_read"] = set()
 
         # Phase 1 — surface the discovery brief (if any) before planning starts
         discovery_brief_text = ""

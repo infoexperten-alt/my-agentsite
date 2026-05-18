@@ -21,6 +21,26 @@ def write_file(ctx: RunContext, path: str, content: str) -> str:
         path: Relative file path within the version directory.
         content: Full file content to write.
     """
+    # Phase 3 — pre-flight gate. If `_preflight_required` is set in deps,
+    # block the write until every required guide has been read (or attempted).
+    # Returns an actionable error string so the model can recover by reading
+    # the missing guides and retrying. Once satisfied, the gate self-disarms.
+    required = ctx.deps.get("_preflight_required")
+    if required:
+        attempted = ctx.deps.setdefault("_preflight_read", set())
+        missing = [g for g in required if g not in attempted]
+        if missing:
+            return (
+                "PRE-FLIGHT REQUIRED — before calling write_file you must call "
+                f"read_guide() for each of: {missing}. "
+                "(These guides anchor cross-page consistency. Calling read_guide "
+                "satisfies the gate even if the guide does not exist yet — the "
+                "tool simply returns 'not found' and the gate clears.) "
+                "Retry your write_file after reading them."
+            )
+        # Gate satisfied — disarm so we only check once per run.
+        ctx.deps.pop("_preflight_required", None)
+
     version_dir: Path = ctx.deps["version_dir"]
     target = version_dir / path
 
@@ -131,6 +151,11 @@ def read_guide(ctx: RunContext, filename: str) -> str:
     Args:
         filename: Guide filename to read.
     """
+    # Phase 3 — pre-flight: record the attempt regardless of whether the guide
+    # exists. The act of asking for it is what satisfies the gate.
+    attempted = ctx.deps.setdefault("_preflight_read", set())
+    attempted.add(filename)
+
     project_dir: Path = ctx.deps["project_dir"]
     guides_dir = project_dir / "guides"
     target = guides_dir / filename

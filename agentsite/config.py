@@ -35,6 +35,11 @@ class Settings(BaseSettings):
     # Response caching
     cache_enabled: bool = False
 
+    # Phase 3 — pre-flight enforcement on write_file (Developer must read
+    # design-system.md and architecture.md first). Default on.
+    preflight_enabled: bool = True
+    preflight_required_guides: list[str] = ["design-system.md", "architecture.md"]
+
     @property
     def projects_dir(self) -> Path:
         return self.data_dir / "projects"
