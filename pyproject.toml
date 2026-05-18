@@ -37,6 +37,20 @@ agentsite = "agentsite.cli:cli"
 [tool.setuptools.packages.find]
 include = ["agentsite*"]
 
+[tool.setuptools.package-data]
+# Ship the bundled skill bodies, design-system tokens, prompt templates,
+# and the third-party notices file with the wheel. Without these globs
+# pip-installed wheels are missing the *.md / *.css / *.json that the
+# skill / design-system / template loaders read at runtime.
+agentsite = [
+    "skills/**/*.md",
+    "design_systems/**/*.md",
+    "design_systems/**/*.css",
+    "design_systems/**/*.html",
+    "prompt_templates/**/*.json",
+    "THIRD_PARTY_NOTICES.md",
+]
+
 [tool.ruff]
 target-version = "py310"
 line-length = 120

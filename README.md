@@ -135,6 +135,85 @@ Agents enforce WCAG AA contrast, semantic HTML, ARIA labels, and keyboard naviga
 
 Download generated sites as ZIP archives or browse them directly through the built-in preview server.
 
+### Discovery brief & direction picker
+
+Before the PM agent runs, the frontend shows a 30-second discovery form (ported from open-design) — what surface, who it's for, brand context, tone, scale, constraints. If the user picks "Pick a direction for me", a follow-up direction picker shows 5 OKLch palettes (editorial-monocle, modern-minimal, human-approachable, tech-utility, brutalist-experimental). Choosing a direction skips the Designer agent entirely and synthesizes the StyleSpec deterministically from the chosen palette.
+
+### Skill catalog + RAG-style retrieval
+
+Eight bundled skills (`saas-landing`, `pricing-page`, `dashboard`, `docs-page`, `blog-post`, `portfolio`, `mobile-app`, `coming-soon`) live under `agentsite/skills/<id>/SKILL.md`. The PM agent receives a ranked top-5 list per brief (via lightweight token-overlap retrieval over the catalog) instead of a hardcoded full inventory; it picks `skill_id` per page and the Developer's prompt inherits that skill's instructions.
+
+### Design system inheritance
+
+Four bundled design systems (`linear`, `vercel`, `stripe`, `notion`) under `agentsite/design_systems/<id>/{DESIGN.md, tokens.css}`. Setting `style_spec.inherits_from = "linear"` makes the Designer agent extend those tokens instead of inventing new ones. Users can save their own systems via the API; they persist in SQLite alongside the bundled ones.
+
+### Multi-dimensional critique + per-project quality ratchet
+
+Behind `AGENTSITE_USE_CRITIQUE_PANEL=1`: a panel of four single-dimension reviewers (visual_fidelity, accessibility, content_quality, code_health) scores each generation; a judge agent aggregates into a `ReviewVerdict`. An only-up `quality_ratchet.json` per project enforces "every dimension must equal or exceed its current floor" — regressions are rejected, accepted runs raise the floor. Surfaced in the Analytics dashboard.
+
+### Pre-flight enforcement
+
+The Developer must call `read_guide('design-system.md')` and `read_guide('architecture.md')` before its first `write_file`. Returns an actionable error otherwise; self-disarms after the first satisfied write so subsequent writes are unblocked.
+
+### Steer mailbox (in-flight steering)
+
+While generation is running, the chat input flips to "Steer" mode. Steer messages flow through the WebSocket into a per-project mailbox; the pipeline drains the mailbox just before the build phase and injects accumulated tweaks into the developer prompt via `{user_steer}`.
+
+### Live srcdoc preview
+
+`write_file` of any `*.html` publishes a `preview_update` WS event with the rendered HTML and a content hash. The preview iframe switches to `srcDoc` mode and remounts on every hash change so you see the page evolve as the agent writes it — no server round trip.
+
+### Brand extraction (URL / screenshot / PDF)
+
+Three-tab uploader on the project Brand page. URL extraction fetches HTML + linked CSS over an SSRF-guarded `httpx` client and derives a populated `StyleSpec` (hex palette classified by luminance + chroma into bg / surface / fg / accent slots; font sniff from a curated family list). Image extraction uses Pillow quantization; PDF extraction prefers Prompture's ingestion pipeline with a raw-bytes fallback.
+
+### Per-project memory
+
+Heuristic extraction after every successful generation captures durable facts from the discovery brief, in-flight steer messages, and the critique verdict ("you prefer serif headers", "no emoji in body copy", "weakest dimension last run: accessibility"). Saved to `project_memories`, deduplicated, and prepended to the PM prompt on the next run.
+
+### Smart per-agent routing
+
+`settings.agent_routing` maps each agent key to a strategy hint (`fast`, `cost_optimized`, `balanced`, `quality_first`) or an explicit model id; `routing_model_pools` holds the candidate pool per strategy. Critique-panel reviewers default to cheap models and the judge to quality-first so enabling the panel doesn't balloon the per-run cost.
+
+### Refusal detection & analytics
+
+Every agent's text output is run through `RefusalDetector` (prefers Prompture's when installed, regex fallback otherwise). Refusals are stamped onto the AgentRun record and surfaced live via the `refusal_detected` WS event. The Analytics dashboard shows refusal rate by agent alongside cost-by-routing and per-project quality ratchet trends.
+
+### Device frames
+
+Pixel-accurate SVG chrome (iPhone 15 Pro, Pixel, iPad Pro, MacBook) under `frontend/public/frames/`. The DeviceSwitcher in the page builder swaps the synthetic browser chrome for real device chrome around the preview iframe.
+
+### Prompt template gallery
+
+Six starter templates on the dashboard (`saas-landing-b2b`, `portfolio-designer`, `docs-quickstart`, `dashboard-ops`, `pricing-saas`, `coming-soon`) each link a `skill_id` + `direction_id` + concrete prompt; clicking prefills the create-project modal.
+
+---
+
+## Phase 1–12 Feature Flags
+
+All non-default capabilities live behind a setting in `agentsite/config.py` (prefix env vars with `AGENTSITE_`):
+
+| Flag | Default | Effect |
+|---|---|---|
+| `preflight_enabled` | `True` | Developer must call `read_guide()` for required guides before any `write_file`. |
+| `preflight_required_guides` | `["design-system.md", "architecture.md"]` | Which guides satisfy the pre-flight gate. |
+| `use_critique_panel` | `False` | Run the 4-dim critique panel + judge + ratchet after every successful generation. Pair with `agent_routing` to keep cost flat. |
+| `use_deep_agent_developer` | `False` | Wrap the Developer in `AsyncDeepAgent` with planning on, enabling the TodoStream UI. Falls back to the tool-calling Developer when the installed Prompture predates `AsyncDeepAgent`. |
+| `agent_routing` | `{accessibility: cost_optimized, …}` | Per-agent routing strategy or explicit model id. |
+| `routing_model_pools` | `{fast: [], cost_optimized: [], …}` | Strategy → candidate model id pool (first wins). |
+
+Per-project knobs live on the `Project.style_spec`:
+
+- `style_spec.inherits_from` — id of a bundled or user-saved design system. The Designer extends those tokens instead of inventing.
+- `style_spec.direction_id` — bound to the chosen `DesignDirection` from the picker; deterministically synthesized.
+
+Per-generation overrides live on the `POST /api/projects/{id}/pages/{slug}/generate` request body:
+
+- `discovery_brief` — answers from `GET /api/discovery/form`.
+- `direction_id` — short-circuits the Designer.
+- `inherits_from` — sets the design system for this run.
+- `agent_models`, `provider_keys`, `max_cost`, `budget_policy` — fine-grain budget + model overrides per agent.
+
 ---
 
 ## CLI Reference
