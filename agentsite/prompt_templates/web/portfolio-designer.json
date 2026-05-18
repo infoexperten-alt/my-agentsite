@@ -1,0 +1,9 @@
+{
+  "id": "portfolio-designer",
+  "name": "Designer portfolio",
+  "category": "web",
+  "skill_id": "portfolio",
+  "direction_id": "editorial-monocle",
+  "prompt": "A personal portfolio site for a senior product designer focused on fintech work. Bold typographic intro, 6 project cards with cover blocks + role + year, short about paragraph, selected-clients strip, contact section with email + LinkedIn.",
+  "icon": "user-circle"
+}

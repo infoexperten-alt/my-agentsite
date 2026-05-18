@@ -364,6 +364,22 @@ class GenerationPipeline:
                         "suggestions": _rfb.suggestions,
                     })
 
+            # Phase 12 — surface refusal-like outputs as a WS warning so the
+            # frontend can show a "try a different model" hint. Non-fatal —
+            # the existing fallback chain handles empty output too.
+            if output_text:
+                try:
+                    from .refusal import detect_refusal
+                    sig = detect_refusal(output_text)
+                    if sig.is_refusal:
+                        await self._emit("refusal_detected", agent=agent_key, data={
+                            "reason": sig.reason,
+                            "matched": sig.matched,
+                            "model": self._agent_models.get(agent_key, ""),
+                        })
+                except Exception:
+                    pass
+
             # Capture developer/specialist output for fallback extraction
             _build_agents = {"developer", "markup", "style", "style_scss", "script"}
             if agent_key in _build_agents:

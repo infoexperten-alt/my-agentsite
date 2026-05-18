@@ -436,7 +436,7 @@ class WSEvent(BaseModel):
             "discovery_form_requested, discovery_brief_submitted, "
             "critique_verdict, preview_update, skill_bound, "
             "todo_update, steer_received, steer_applied, "
-            "memory_extracted"
+            "memory_extracted, refusal_detected"
         )
     )
     agent: str = Field(default="", description="Agent name")

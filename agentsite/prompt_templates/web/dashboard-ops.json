@@ -1,0 +1,9 @@
+{
+  "id": "dashboard-ops",
+  "name": "Ops analytics dashboard",
+  "category": "web",
+  "skill_id": "dashboard",
+  "direction_id": "tech-utility",
+  "prompt": "An internal analytics dashboard for a billing operations team. Sidebar nav, topbar with workspace + search, 4 KPI cards (MRR, active subs, churn rate, latest invoice count), one large area chart for revenue trend, a sortable invoices table with status pills, and an empty state for the alerts panel.",
+  "icon": "chart-line"
+}
