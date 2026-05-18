@@ -45,6 +45,11 @@ class Settings(BaseSettings):
     # extra reviewer cost is offset.
     use_critique_panel: bool = False
 
+    # Phase 7 — wrap the Developer in AsyncDeepAgent with planning on so we
+    # get streamed todos + in-flight steer support. Off by default until the
+    # plain Agent path is fully decommissioned.
+    use_deep_agent_developer: bool = False
+
     @property
     def projects_dir(self) -> Path:
         return self.data_dir / "projects"

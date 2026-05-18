@@ -85,6 +85,7 @@ def create_pipeline(
                 "Previous review feedback (if any): {review_feedback}\n\n"
                 "Skill guidance (when set, treat as authoritative for this page type):\n"
                 "{skill_instructions}\n\n"
+                "Live user steer (incorporate these tweaks if present):\n{user_steer}\n\n"
                 "Use the write_file tool to save each file. Generate complete, "
                 "self-contained HTML with inline or linked CSS/JS.",
             ),

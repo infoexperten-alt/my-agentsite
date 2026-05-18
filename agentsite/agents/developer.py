@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from prompture import AsyncAgent as Agent
 
+from ..config import settings
 from ..engine.capabilities import supports_tools
 from .personas import DEVELOPER_PERSONA
 from .tools import dev_tools
@@ -15,9 +16,46 @@ def create_developer_agent_auto(model: str) -> Agent:
     Uses capability detection to choose the right variant upfront,
     avoiding runtime fallbacks.
     """
-    if supports_tools(model):
+    if not supports_tools(model):
+        return create_developer_agent_plain(model)
+    if settings.use_deep_agent_developer:
+        return create_developer_deep_agent(model)
+    return create_developer_agent(model)
+
+
+def create_developer_deep_agent(model: str) -> Agent:
+    """Phase 7 — Developer wrapped in `AsyncDeepAgent` with planning on.
+
+    Gives us `write_todos` for free (live plan list streamed via the pipeline's
+    todo_update event). VFS, sub-agents, and summarization are explicitly OFF
+    because the developer writes to a real filesystem via our existing
+    `write_file` tool — turning on VFS would shadow that and cause the model
+    to write to an in-memory store the rest of the pipeline never reads.
+
+    Falls back to the regular tool-calling Developer when the installed
+    Prompture predates `AsyncDeepAgent` (older site-packages installs).
+    """
+    try:
+        from prompture.agents.async_deep_agent import AsyncDeepAgent
+    except ImportError:
+        import logging
+        logging.getLogger("agentsite.developer").warning(
+            "AsyncDeepAgent unavailable in installed prompture — "
+            "falling back to tool-calling developer (no planning todos)."
+        )
         return create_developer_agent(model)
-    return create_developer_agent_plain(model)
+
+    return AsyncDeepAgent(
+        model,
+        system_prompt=DEVELOPER_PERSONA,
+        tools=dev_tools,
+        enable_planning=True,
+        enable_vfs=False,
+        enable_summarization=False,
+        name="developer",
+        description="Developer with planning (write_todos)",
+        options={"max_tokens": 65536, "timeout": 900},
+    )
 
 
 def create_developer_agent(model: str) -> Agent:

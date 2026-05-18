@@ -475,6 +475,13 @@ class GenerationPipeline:
             deps["_preflight_required"] = set(settings.preflight_required_guides)
             deps["_preflight_read"] = set()
 
+        # Phase 7 — drain any pending steer messages so the run starts clean
+        try:
+            from .interrupt import mailbox as _steer_mailbox
+            _steer_mailbox.clear(project.id)
+        except Exception:
+            pass
+
         # Phase 1 — surface the discovery brief (if any) before planning starts
         discovery_brief_text = ""
         if discovery_brief is not None:
@@ -679,9 +686,21 @@ class GenerationPipeline:
             architecture_guide = self._pm.read_guide(project.id, "architecture.md") or ""
 
             # --- Phase B: Run Designer standalone (with fallback) if needed ---
+            # Phase 7 — drain any steer the user sent while PM was running
+            user_steer = ""
+            try:
+                from .interrupt import mailbox as _sm
+                drained = _sm.drain(project.id)
+                if drained:
+                    user_steer = "\n".join(f"- {s}" for s in drained)
+                    await self._emit("steer_applied", data={"text": user_steer, "count": len(drained)})
+            except Exception:
+                logger.debug("steer drain skipped", exc_info=True)
+
             initial_state = {
                 "prompt": page_prompt,
                 "discovery_brief": discovery_brief_text,
+                "user_steer": user_steer,
                 "skill_instructions": getattr(self, "_skill_instructions", "") or "",
                 "skill_id": getattr(self, "_skill_id", "") or "",
                 "site_plan": site_plan_text,

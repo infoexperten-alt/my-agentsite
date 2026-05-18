@@ -334,9 +334,24 @@ async def generation_websocket(project_id: str, ws: WebSocket):
     """WebSocket endpoint for real-time generation progress."""
     await ws_manager.connect(project_id, ws)
     try:
+        import json as _json
+
+        from ...engine.interrupt import mailbox
+        from ...models import WSEvent
         while True:
-            # Keep connection alive, handle client messages if needed
             data = await ws.receive_text()
-            # Client can send control messages (future: cancel, etc.)
+            # Phase 7 — inbound steer: {"type": "steer", "text": "..."}.
+            try:
+                msg = _json.loads(data) if data else {}
+            except Exception:
+                msg = {}
+            if isinstance(msg, dict) and msg.get("type") == "steer":
+                text = str(msg.get("text", "")).strip()
+                if text:
+                    mailbox.deposit(project_id, text)
+                    await ws_manager.broadcast(
+                        project_id,
+                        WSEvent(type="steer_received", data={"text": text, "bytes": len(text)}),
+                    )
     except WebSocketDisconnect:
         ws_manager.disconnect(project_id, ws)

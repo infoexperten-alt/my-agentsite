@@ -413,7 +413,8 @@ class WSEvent(BaseModel):
             "error, file_written, generation_complete, "
             "pipeline_plan, model_fallback, budget_exceeded, "
             "discovery_form_requested, discovery_brief_submitted, "
-            "critique_verdict, preview_update, skill_bound"
+            "critique_verdict, preview_update, skill_bound, "
+            "todo_update, steer_received, steer_applied"
         )
     )
     agent: str = Field(default="", description="Agent name")
