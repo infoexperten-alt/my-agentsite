@@ -25,6 +25,7 @@ export default function PageBuilderPage() {
   const [messages, setMessages] = useState([]);
   const [pageReady, setPageReady] = useState(false);
   const [device, setDevice] = useState(null);
+  const [deviceFrame, setDeviceFrame] = useState(null);
   const [zoom, setZoom] = useState(100);
   const [activeVersion, setActiveVersion] = useState(null);
   const [refreshKey, setRefreshKey] = useState(0);
@@ -274,7 +275,10 @@ export default function PageBuilderPage() {
         projectId={projectId}
         page={page}
         device={device}
-        onDeviceChange={setDevice}
+        onDeviceChange={(width, frame) => {
+          setDevice(width);
+          setDeviceFrame(frame || null);
+        }}
         versions={versions}
         activeVersion={activeVersion}
         onVersionChange={setActiveVersion}
@@ -338,6 +342,7 @@ export default function PageBuilderPage() {
                 html={gen.livePreview?.[slug]?.html}
                 contentHash={gen.livePreview?.[slug]?.contentHash}
                 width={device}
+                frame={deviceFrame}
               />
             )}
           </div>

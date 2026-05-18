@@ -1,8 +1,41 @@
-export default function PreviewFrame({ src, html, contentHash, width }) {
+import DeviceFrame from "./DeviceFrame";
+
+export default function PreviewFrame({ src, html, contentHash, width, frame }) {
   const hasSrcdoc = !!html;
   const urlLabel = hasSrcdoc
     ? `srcdoc:live (${contentHash || "preview"})`
     : (src || "about:blank");
+
+  // When a device frame is selected, drop the browser chrome entirely and
+  // wrap the iframe in the device SVG. The frame *is* the chrome.
+  if (frame) {
+    const iframeEl = hasSrcdoc ? (
+      <iframe
+        key={contentHash || "live"}
+        srcDoc={html}
+        className="w-full h-full border-none bg-white"
+        title="Page Preview (live)"
+        sandbox="allow-scripts"
+      />
+    ) : src ? (
+      <iframe
+        key={src}
+        src={src}
+        className="w-full h-full border-none bg-white"
+        title="Page Preview"
+        sandbox="allow-scripts"
+      />
+    ) : (
+      <div className="flex items-center justify-center h-full bg-slate-900 text-slate-400 text-sm">
+        No preview available yet
+      </div>
+    );
+    return (
+      <div className="relative h-full flex items-center justify-center" style={{ width: width || "100%", maxWidth: "1200px" }}>
+        <DeviceFrame frame={frame}>{iframeEl}</DeviceFrame>
+      </div>
+    );
+  }
 
   return (
     <div

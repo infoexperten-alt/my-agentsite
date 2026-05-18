@@ -1,0 +1,15 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1440 940" width="1440" height="940" preserveAspectRatio="xMidYMid meet" aria-label="MacBook Pro 14 frame">
+  <!-- Lid -->
+  <rect x="40" y="0" width="1360" height="860" rx="20" ry="20" fill="#1f2937" stroke="#111827" stroke-width="2"/>
+  <!-- Screen safe area -->
+  <rect x="60" y="40" width="1320" height="800" rx="6" ry="6" fill="#0b1020"/>
+  <!-- Notch -->
+  <rect x="676" y="0" width="88" height="22" rx="0" ry="0" fill="#000"/>
+  <!-- Hinge -->
+  <rect x="0" y="860" width="1440" height="20" fill="#111827"/>
+  <!-- Base bottom (chin) -->
+  <path d="M 0 880 L 1440 880 L 1380 940 L 60 940 Z" fill="#111827"/>
+  <!-- Trackpad slot hint -->
+  <rect x="540" y="900" width="360" height="6" rx="2" fill="#1f2937"/>
+</svg>
