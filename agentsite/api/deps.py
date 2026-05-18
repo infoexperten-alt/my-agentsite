@@ -74,6 +74,49 @@ async def get_assets() -> AssetHandler:
     return asset_handler
 
 
+def guard_external_url(url: str) -> str:
+    """Phase 8 — SSRF guard for user-supplied URLs.
+
+    Rejects:
+      - non-http(s) schemes (file://, gopher://, javascript:, ...)
+      - empty or malformed URLs
+      - hostnames that resolve to a private/loopback/link-local IP
+
+    Returns the normalized URL on success; raises HTTPException(400) otherwise.
+    """
+    import ipaddress
+    import socket
+    from urllib.parse import urlparse
+
+    from fastapi import HTTPException
+
+    if not url or not isinstance(url, str):
+        raise HTTPException(status_code=400, detail="URL is required")
+    parsed = urlparse(url.strip())
+    if parsed.scheme not in ("http", "https"):
+        raise HTTPException(status_code=400, detail="Only http(s) URLs are allowed")
+    if not parsed.hostname:
+        raise HTTPException(status_code=400, detail="URL missing hostname")
+
+    try:
+        infos = socket.getaddrinfo(parsed.hostname, None)
+    except socket.gaierror as exc:
+        raise HTTPException(status_code=400, detail=f"DNS resolution failed: {exc}") from exc
+
+    for info in infos:
+        try:
+            ip = ipaddress.ip_address(info[4][0])
+        except ValueError:
+            continue
+        if ip.is_private or ip.is_loopback or ip.is_link_local or ip.is_multicast or ip.is_reserved:
+            raise HTTPException(
+                status_code=400,
+                detail=f"URL resolves to disallowed IP {ip} ({parsed.hostname})",
+            )
+
+    return parsed.geturl()
+
+
 def reset():
     """Clear all singletons so they can be re-initialized."""
     global db, project_manager, asset_handler
