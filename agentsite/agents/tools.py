@@ -63,6 +63,14 @@ def write_file(ctx: RunContext, path: str, content: str) -> str:
     if on_file_written:
         on_file_written(path)
 
+    # Phase 6 — srcdoc live preview. For canonical HTML pages, hand the
+    # rendered body to the preview callback so the iframe can swap to
+    # srcdoc mode without waiting for a server round-trip.
+    if path.endswith(".html"):
+        on_preview = ctx.deps.get("on_preview_update")
+        if on_preview:
+            on_preview(path, content)
+
     return f"Written: {path} ({len(content)} bytes)"
 
 

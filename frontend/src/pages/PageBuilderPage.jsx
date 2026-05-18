@@ -330,7 +330,12 @@ export default function PageBuilderPage() {
                 width={device}
               />
             ) : (
-              <PreviewFrame src={previewUrl} width={device} />
+              <PreviewFrame
+                src={previewUrl}
+                html={gen.livePreview?.[slug]?.html}
+                contentHash={gen.livePreview?.[slug]?.contentHash}
+                width={device}
+              />
             )}
           </div>
 

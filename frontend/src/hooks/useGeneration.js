@@ -11,6 +11,8 @@ export default function useGeneration(projectId) {
   const [pipelineAgents, setPipelineAgents] = useState(null);
   const [agentMeta, setAgentMeta] = useState(null);
   const [parallelGroups, setParallelGroups] = useState(null);
+  // Phase 6 — live srcdoc preview per page slug
+  const [livePreview, setLivePreview] = useState({}); // slug -> { html, contentHash }
   const ws = useWebSocket(projectId);
   const versionRefreshRef = useRef(null);
   const projectRefreshRef = useRef(null);
@@ -81,6 +83,18 @@ export default function useGeneration(projectId) {
       ws.on("file_written", (msg) => {
         setFiles((prev) => [...prev, msg.data]);
       }),
+      ws.on("preview_update", (msg) => {
+        const slug = msg.data?.page_slug;
+        if (!slug) return;
+        setLivePreview((prev) => ({
+          ...prev,
+          [slug]: {
+            html: msg.data?.html || "",
+            contentHash: msg.data?.content_hash || "",
+            path: msg.data?.path || "",
+          },
+        }));
+      }),
       ws.on("asset_created", (msg) => {
         setGeneratedAssets((prev) => [...prev, msg.data]);
       }),
@@ -98,6 +112,9 @@ export default function useGeneration(projectId) {
       }),
       ws.on("generation_complete", (msg) => {
         setGenerating(false);
+        // Phase 6 — once the final file is on disk, swap back to the static
+        // preview URL so the iframe loads from the project filesystem.
+        setLivePreview({});
         if (msg.data?.success === false && msg.data?.error) {
           setError(msg.data.error);
         } else {
@@ -135,6 +152,7 @@ export default function useGeneration(projectId) {
       setPipelineAgents(null);
       setAgentMeta(null);
       setParallelGroups(null);
+      setLivePreview({});
       ws.connect();
       try {
         await startGeneration(projectId, slug, data);
@@ -155,5 +173,5 @@ export default function useGeneration(projectId) {
     projectRefreshRef.current = fn;
   }, []);
 
-  return { generating, agents, files, generatedAssets, error, pipelineAgents, agentMeta, parallelGroups, start, onVersionRefresh, onProjectRefresh };
+  return { generating, agents, files, generatedAssets, error, pipelineAgents, agentMeta, parallelGroups, livePreview, start, onVersionRefresh, onProjectRefresh };
 }

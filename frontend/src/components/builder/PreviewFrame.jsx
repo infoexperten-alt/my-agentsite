@@ -1,4 +1,9 @@
-export default function PreviewFrame({ src, width }) {
+export default function PreviewFrame({ src, html, contentHash, width }) {
+  const hasSrcdoc = !!html;
+  const urlLabel = hasSrcdoc
+    ? `srcdoc:live (${contentHash || "preview"})`
+    : (src || "about:blank");
+
   return (
     <div
       className="relative h-full bg-white rounded-lg shadow-2xl overflow-hidden flex flex-col border border-slate-800 ring-1 ring-white/5 z-10 transition-all duration-500"
@@ -13,14 +18,25 @@ export default function PreviewFrame({ src, width }) {
         </div>
         <div className="flex-1 flex justify-center">
           <div className="bg-white border border-slate-200 rounded px-3 py-0.5 text-[10px] text-slate-400 font-mono w-64 text-center truncate">
-            {src || "about:blank"}
+            {urlLabel}
           </div>
         </div>
+        {hasSrcdoc && (
+          <span className="text-[10px] font-mono text-emerald-600">● live</span>
+        )}
       </div>
 
       {/* iframe */}
       <div className="flex-1 overflow-hidden bg-white relative">
-        {src ? (
+        {hasSrcdoc ? (
+          <iframe
+            key={contentHash || "live"}
+            srcDoc={html}
+            className="w-full h-full border-none"
+            title="Page Preview (live)"
+            sandbox="allow-scripts"
+          />
+        ) : src ? (
           <iframe
             key={src}
             src={src}

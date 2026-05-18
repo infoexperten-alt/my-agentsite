@@ -265,6 +265,26 @@ class GenerationPipeline:
             except RuntimeError:
                 pass  # No event loop in thread context — file_written events are nice-to-have
 
+        def _on_preview_update(path: str, html: str) -> None:
+            # Phase 6 — emit a `preview_update` WS event with the rendered
+            # HTML so the frontend can swap the iframe to srcdoc mode.
+            try:
+                loop = asyncio.get_running_loop()
+                # Stable content hash for iframe key=hash remount semantics
+                import hashlib as _hashlib
+                content_hash = _hashlib.sha1(html.encode("utf-8")).hexdigest()[:12]
+                task = loop.create_task(self._emit("preview_update", data={
+                    "page_slug": slug,
+                    "path": path,
+                    "html": html,
+                    "content_hash": content_hash,
+                    "bytes": len(html),
+                }))
+                _background_tasks.append(task)
+                task.add_done_callback(_background_tasks.remove)
+            except RuntimeError:
+                pass
+
         def _on_asset_created(filename: str) -> None:
             try:
                 loop = asyncio.get_running_loop()
@@ -446,6 +466,7 @@ class GenerationPipeline:
             "project_id": project.id,
             "on_file_written": _on_file_written,
             "on_asset_created": _on_asset_created,
+            "on_preview_update": _on_preview_update,
             "written_files": written_files,
         }
         # Phase 3 — pre-flight gate state. write_file checks
