@@ -559,12 +559,42 @@ class GenerationPipeline:
                 on_agent_complete=_on_agent_complete,
                 on_agent_error=_on_agent_error,
             )
+            # Phase 11 wiring — retrieve the top relevant skills + design
+            # systems for this brief and inline them, so the PM can pick from
+            # a short ranked list instead of from a hardcoded full catalog.
+            skill_block = ""
+            design_system_block = ""
+            try:
+                from .rag_index import retrieve as _rag_retrieve
+
+                _skill_hits = _rag_retrieve(page_prompt, k=5, kinds=["skill"])
+                if _skill_hits:
+                    skill_lines = ["## Available skills (sorted by relevance to your brief)"]
+                    for h in _skill_hits:
+                        skill_lines.append(
+                            f"- `{h.entry.id}` (match {h.score:.0%}) — {h.entry.body[:140]}"
+                        )
+                    skill_block = "\n".join(skill_lines)
+
+                _ds_hits = _rag_retrieve(page_prompt, k=3, kinds=["design_system"])
+                if _ds_hits:
+                    ds_lines = ["## Candidate design systems (most relevant first)"]
+                    for h in _ds_hits:
+                        ds_lines.append(f"- `{h.entry.id}` ({h.entry.title}) — match {h.score:.0%}")
+                    design_system_block = "\n".join(ds_lines)
+            except Exception:
+                logger.debug("RAG retrieve skipped", exc_info=True)
+
             pm_prompt = page_prompt
             prelude_parts = []
             if memory_block:
                 prelude_parts.append(memory_block)
             if discovery_brief_text:
                 prelude_parts.append(discovery_brief_text)
+            if skill_block:
+                prelude_parts.append(skill_block)
+            if design_system_block:
+                prelude_parts.append(design_system_block)
             if prelude_parts:
                 pm_prompt = "\n\n---\n\n".join(prelude_parts) + f"\n\n---\n\nUser brief:\n{page_prompt}"
 
