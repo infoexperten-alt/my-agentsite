@@ -545,6 +545,30 @@ class GenerationPipeline:
                 required_agents = site_plan.required_agents
                 tech_stack = site_plan.tech_stack
 
+                # Phase 5 — find the page's skill (if PM picked one) and surface
+                # its instructions to the build pipeline via shared state.
+                self._skill_instructions = ""
+                self._skill_id = None
+                try:
+                    page_plan = next(
+                        (p for p in site_plan.pages if p.slug == slug),
+                        site_plan.pages[0] if site_plan.pages else None,
+                    )
+                    if page_plan and page_plan.skill_id:
+                        from ..skills import find_skill
+                        _sk = find_skill(page_plan.skill_id)
+                        if _sk is not None:
+                            self._skill_id = _sk.name
+                            self._skill_instructions = _sk.instructions
+                            logger.info("Phase 5: bound skill '%s' for page '%s'", _sk.name, slug)
+                            await self._emit("skill_bound", data={
+                                "skill": _sk.name,
+                                "description": _sk.description,
+                                "slug": slug,
+                            })
+                except Exception:
+                    logger.debug("Skill resolution skipped", exc_info=True)
+
                 # Emit site_plan_ready so hosts can inspect structure before design/dev
                 await self._emit("site_plan_ready", data={
                     "site_plan": site_plan.model_dump(),
@@ -637,6 +661,8 @@ class GenerationPipeline:
             initial_state = {
                 "prompt": page_prompt,
                 "discovery_brief": discovery_brief_text,
+                "skill_instructions": getattr(self, "_skill_instructions", "") or "",
+                "skill_id": getattr(self, "_skill_id", "") or "",
                 "site_plan": site_plan_text,
                 "project_dir": self._pm.project_dir(project.id),
                 "review_feedback": "",

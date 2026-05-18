@@ -67,6 +67,13 @@ class PagePlan(BaseModel):
     title: str = Field(description="Page title")
     sections: list[str] = Field(description="Ordered list of section descriptions")
     priority: int = Field(default=1, description="Build priority (1 = highest)")
+    skill_id: str | None = Field(
+        default=None,
+        description=(
+            "Phase 5 — id of the skill (from GET /api/skills) whose persona will guide "
+            "the Developer for this page. None = use the default Developer persona."
+        ),
+    )
 
 
 class SitePlan(BaseModel):
