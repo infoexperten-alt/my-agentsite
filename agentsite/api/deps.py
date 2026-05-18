@@ -8,6 +8,7 @@ from ..storage.database import Database
 from ..storage.repository import (
     AgentConfigRepository,
     AgentRunRepository,
+    MemoryRepository,
     MessageRepository,
     PageRepository,
     ProjectRepository,
@@ -24,6 +25,7 @@ version_repo: VersionRepository | None = None
 agent_config_repo: AgentConfigRepository | None = None
 agent_run_repo: AgentRunRepository | None = None
 message_repo: MessageRepository | None = None
+memory_repo: MemoryRepository | None = None
 
 
 async def get_db() -> Database:
@@ -64,6 +66,12 @@ async def get_message_repo() -> MessageRepository:
     if message_repo is None:
         raise RuntimeError("Message repository not initialized")
     return message_repo
+
+
+async def get_memory_repo() -> MemoryRepository:
+    if memory_repo is None:
+        raise RuntimeError("Memory repository not initialized")
+    return memory_repo
 
 
 async def get_pm() -> ProjectManager:

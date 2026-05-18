@@ -475,6 +475,18 @@ class GenerationPipeline:
             deps["_preflight_required"] = set(settings.preflight_required_guides)
             deps["_preflight_read"] = set()
 
+        # Phase 10 — load top memories for this project so the PM has context.
+        memory_block = ""
+        try:
+            from ..api import deps as _api_deps
+            from .memory import render_for_context as _render_mem
+
+            if getattr(_api_deps, "memory_repo", None) is not None:
+                _facts = await _api_deps.memory_repo.list_by_project(project.id, limit=15)
+                memory_block = _render_mem(_facts)
+        except Exception:
+            logger.debug("Memory load skipped", exc_info=True)
+
         # Phase 7 — drain any pending steer messages so the run starts clean
         try:
             from .interrupt import mailbox as _steer_mailbox
@@ -524,8 +536,13 @@ class GenerationPipeline:
                 on_agent_error=_on_agent_error,
             )
             pm_prompt = page_prompt
+            prelude_parts = []
+            if memory_block:
+                prelude_parts.append(memory_block)
             if discovery_brief_text:
-                pm_prompt = f"{discovery_brief_text}\n\n---\n\nUser brief:\n{page_prompt}"
+                prelude_parts.append(discovery_brief_text)
+            if prelude_parts:
+                pm_prompt = "\n\n---\n\n".join(prelude_parts) + f"\n\n---\n\nUser brief:\n{page_prompt}"
 
             pm_pipeline = AsyncSequentialGroup(
                 [(pm_agent, "{prompt}")],
@@ -1112,6 +1129,37 @@ class GenerationPipeline:
                 content = self._pm.read_version_file(project.id, slug, version_number, fpath)
                 if content is not None:
                     files_content[fpath] = content
+
+            # Phase 10 — heuristic memory extraction from the inputs of this run.
+            try:
+                from ..api import deps as _api_deps
+                from .memory import extract_memories as _extract_mem
+
+                if getattr(_api_deps, "memory_repo", None) is not None and final_files:
+                    _steer_lines = user_steer.split("\n") if user_steer else []
+                    facts = _extract_mem(
+                        project_id=project.id,
+                        brief=discovery_brief,
+                        steer_lines=[s.lstrip("- ").strip() for s in _steer_lines if s.strip()],
+                        source_run_id=session_id,
+                    )
+                    # Save only facts that aren't trivially duplicate of existing rows
+                    if facts:
+                        existing = await _api_deps.memory_repo.list_by_project(project.id, limit=50)
+                        existing_keys = {(f.kind, f.body) for f in existing}
+                        new_facts = [f for f in facts if (f.kind, f.body) not in existing_keys]
+                        for f in new_facts:
+                            try:
+                                await _api_deps.memory_repo.create(f)
+                            except Exception:
+                                logger.debug("Memory create skipped", exc_info=True)
+                        if new_facts:
+                            await self._emit("memory_extracted", data={
+                                "count": len(new_facts),
+                                "facts": [f.model_dump() for f in new_facts],
+                            })
+            except Exception:
+                logger.debug("Memory extraction skipped", exc_info=True)
 
             # Phase 4 — run the multi-dim critique panel + update ratchet.
             # Feature-flagged: off by default; surfaces a `critique_verdict`

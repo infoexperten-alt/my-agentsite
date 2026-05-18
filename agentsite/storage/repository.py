@@ -6,7 +6,7 @@ import json
 from datetime import datetime, timezone
 from typing import Any
 
-from ..models import AgentConfig, AgentRun, ChatMessage, Page, PageVersion, Project, StyleSpec
+from ..models import AgentConfig, AgentRun, ChatMessage, MemoryFact, Page, PageVersion, Project, StyleSpec
 from .database import Database
 
 
@@ -659,4 +659,57 @@ class AgentRunRepository:
             cost=row["cost"],
             session_id=row["session_id"] if "session_id" in row else "",
             output_summary=json.loads(row["output_summary"]) if row["output_summary"] else {},
+        )
+
+
+class MemoryRepository:
+    """Phase 10 — CRUD for per-project memory facts."""
+
+    def __init__(self, db: Database) -> None:
+        self._db = db
+
+    async def create(self, fact: MemoryFact) -> MemoryFact:
+        await self._db.conn.execute(
+            """INSERT INTO project_memories
+               (id, project_id, kind, body, confidence, source_run_id, created_at)
+               VALUES (?, ?, ?, ?, ?, ?, ?)""",
+            (fact.id, fact.project_id, fact.kind, fact.body, fact.confidence,
+             fact.source_run_id, fact.created_at),
+        )
+        await self._db.conn.commit()
+        return fact
+
+    async def list_by_project(self, project_id: str, *, limit: int = 20) -> list[MemoryFact]:
+        cursor = await self._db.conn.execute(
+            "SELECT * FROM project_memories WHERE project_id=? "
+            "ORDER BY confidence DESC, created_at DESC LIMIT ?",
+            (project_id, limit),
+        )
+        rows = await cursor.fetchall()
+        return [self._row_to_fact(r) for r in rows]
+
+    async def delete(self, fact_id: str) -> bool:
+        cursor = await self._db.conn.execute(
+            "DELETE FROM project_memories WHERE id=?", (fact_id,)
+        )
+        await self._db.conn.commit()
+        return cursor.rowcount > 0
+
+    async def delete_by_project(self, project_id: str) -> int:
+        cursor = await self._db.conn.execute(
+            "DELETE FROM project_memories WHERE project_id=?", (project_id,)
+        )
+        await self._db.conn.commit()
+        return cursor.rowcount
+
+    @staticmethod
+    def _row_to_fact(row) -> MemoryFact:
+        return MemoryFact(
+            id=row["id"],
+            project_id=row["project_id"],
+            kind=row["kind"],
+            body=row["body"],
+            confidence=row["confidence"],
+            source_run_id=row["source_run_id"] or "",
+            created_at=row["created_at"],
         )

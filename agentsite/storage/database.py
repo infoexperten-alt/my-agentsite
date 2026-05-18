@@ -68,6 +68,16 @@ CREATE TABLE IF NOT EXISTS agent_configs (
     updated_at TEXT NOT NULL
 );
 
+CREATE TABLE IF NOT EXISTS project_memories (
+    id TEXT PRIMARY KEY,
+    project_id TEXT NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+    kind TEXT NOT NULL DEFAULT '',
+    body TEXT NOT NULL DEFAULT '',
+    confidence REAL NOT NULL DEFAULT 0.5,
+    source_run_id TEXT DEFAULT '',
+    created_at TEXT NOT NULL
+);
+
 CREATE TABLE IF NOT EXISTS agent_runs (
     id TEXT PRIMARY KEY,
     project_id TEXT NOT NULL,

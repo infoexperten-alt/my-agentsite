@@ -279,6 +279,18 @@ class ReviewVerdict(BaseModel):
         return {d.dimension: d.score for d in self.scores}
 
 
+class MemoryFact(BaseModel):
+    """Phase 10 — a durable per-project fact learned from prior runs."""
+
+    id: str = Field(default_factory=lambda: uuid.uuid4().hex[:12])
+    project_id: str = Field(default="")
+    kind: str = Field(default="preference", description="preference | constraint | brand | other")
+    body: str = Field(description="One-sentence fact in second person ('You prefer …').")
+    confidence: float = Field(default=0.5, description="0-1")
+    source_run_id: str = Field(default="")
+    created_at: str = Field(default_factory=lambda: datetime.now(timezone.utc).isoformat())
+
+
 class QualityRatchet(BaseModel):
     """Per-project floor: future runs must equal or exceed every dimension."""
 
@@ -423,7 +435,8 @@ class WSEvent(BaseModel):
             "pipeline_plan, model_fallback, budget_exceeded, "
             "discovery_form_requested, discovery_brief_submitted, "
             "critique_verdict, preview_update, skill_bound, "
-            "todo_update, steer_received, steer_applied"
+            "todo_update, steer_received, steer_applied, "
+            "memory_extracted"
         )
     )
     agent: str = Field(default="", description="Agent name")
