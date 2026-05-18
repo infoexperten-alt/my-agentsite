@@ -1026,6 +1026,39 @@ class GenerationPipeline:
                 if content is not None:
                     files_content[fpath] = content
 
+            # Phase 4 — run the multi-dim critique panel + update ratchet.
+            # Feature-flagged: off by default; surfaces a `critique_verdict`
+            # WS event and writes <project>/quality_ratchet.json when on.
+            if settings.use_critique_panel and final_files:
+                try:
+                    from ..agents.critique import run_critique_panel
+                    from .ratchet import update_ratchet
+
+                    judge_model = self._agent_models.get("reviewer") or model
+                    verdict, _debate_result = await run_critique_panel(
+                        judge_model,
+                        page_slug=slug,
+                        deps=deps,
+                    )
+                    if verdict is not None:
+                        ratchet, accepted, regressed = update_ratchet(
+                            project.id,
+                            verdict,
+                            slug=slug,
+                            version=version_number,
+                        )
+                        await self._emit(
+                            "critique_verdict",
+                            data={
+                                "verdict": verdict.model_dump(),
+                                "accepted": accepted,
+                                "regressed": regressed,
+                                "floors": ratchet.floors,
+                            },
+                        )
+                except Exception:
+                    logger.warning("Critique panel failed (non-fatal)", exc_info=True)
+
             await self._emit(
                 "generation_complete",
                 data={

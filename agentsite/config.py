@@ -40,6 +40,11 @@ class Settings(BaseSettings):
     preflight_enabled: bool = True
     preflight_required_guides: list[str] = ["design-system.md", "architecture.md"]
 
+    # Phase 4 — multi-dimensional critique panel + ratchet. Default OFF for
+    # one release; flip on once Phase 11 (smart routing) lands so the panel's
+    # extra reviewer cost is offset.
+    use_critique_panel: bool = False
+
     @property
     def projects_dir(self) -> Path:
         return self.data_dir / "projects"

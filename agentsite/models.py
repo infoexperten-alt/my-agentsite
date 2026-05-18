@@ -230,6 +230,55 @@ class ReviewFeedback(BaseModel):
 
 
 # ------------------------------------------------------------------
+# Phase 4 — Multi-dimensional critique
+# ------------------------------------------------------------------
+
+
+CRITIQUE_DIMENSIONS = (
+    "visual_fidelity",
+    "accessibility",
+    "content_quality",
+    "code_health",
+)
+
+
+class DimensionScore(BaseModel):
+    """One reviewer's verdict for a single dimension."""
+
+    dimension: str = Field(description="One of CRITIQUE_DIMENSIONS")
+    score: int = Field(default=5, description="1-10")
+    issues: list[str] = Field(default_factory=list)
+    suggestions: list[str] = Field(default_factory=list)
+
+
+class ReviewVerdict(BaseModel):
+    """Aggregated judgment produced by the critique panel's judge."""
+
+    scores: list[DimensionScore] = Field(default_factory=list)
+    overall_score: int = Field(default=5, description="Min of dimension scores or judge override")
+    approved: bool = Field(default=False)
+    summary: str = Field(default="")
+
+    def score_map(self) -> dict[str, int]:
+        return {d.dimension: d.score for d in self.scores}
+
+
+class QualityRatchet(BaseModel):
+    """Per-project floor: future runs must equal or exceed every dimension."""
+
+    project_id: str = Field(default="")
+    floors: dict[str, int] = Field(
+        default_factory=dict,
+        description="Dimension -> minimum acceptable score (0 = no floor yet).",
+    )
+    last_verdict: ReviewVerdict | None = Field(default=None)
+    history: list[dict] = Field(
+        default_factory=list,
+        description="Append-only log: {ts, slug, version, scores, accepted, raised}.",
+    )
+
+
+# ------------------------------------------------------------------
 # Persistence models
 # ------------------------------------------------------------------
 
@@ -356,7 +405,8 @@ class WSEvent(BaseModel):
             "text_delta, tool_start, tool_end, "
             "error, file_written, generation_complete, "
             "pipeline_plan, model_fallback, budget_exceeded, "
-            "discovery_form_requested, discovery_brief_submitted"
+            "discovery_form_requested, discovery_brief_submitted, "
+            "critique_verdict"
         )
     )
     agent: str = Field(default="", description="Agent name")
