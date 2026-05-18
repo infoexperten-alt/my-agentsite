@@ -69,6 +69,42 @@ def resolve_agent_model(
     return default_model
 
 
+def route_for(
+    agent_key: str,
+    default_model: str,
+    agent_configs: dict[str, AgentConfig] | None = None,
+) -> str:
+    """Phase 11 — strategy-aware routing layered on top of resolve_agent_model.
+
+    Resolution order:
+    1. Explicit per-agent config override (handled by resolve_agent_model)
+    2. settings.agent_routing[agent_key]:
+        - If it contains "/" → treated as an explicit model id
+        - Else interpreted as a strategy ("fast" | "cost_optimized"
+          | "balanced" | "quality_first"); the first model in
+          settings.routing_model_pools[strategy] wins
+    3. resolve_agent_model fallback chain (project default → global)
+    """
+    # 1. Explicit config wins
+    if agent_configs and agent_key in agent_configs:
+        cfg = agent_configs[agent_key]
+        if cfg.model and "/" in cfg.model:
+            return cfg.model
+
+    # 2. Routing strategy
+    hint = settings.agent_routing.get(agent_key)
+    if hint:
+        if "/" in hint:
+            return hint
+        pool = settings.routing_model_pools.get(hint, []) or []
+        for candidate in pool:
+            if candidate and "/" in candidate:
+                return candidate
+
+    # 3. Standard fallback chain
+    return resolve_agent_model(agent_key, default_model, agent_configs)
+
+
 def resolve_utility_model(
     agent_configs: dict[str, AgentConfig] | None = None,
 ) -> str:
