@@ -24,6 +24,7 @@ class GenerateRequest(BaseModel):
     max_cost: float | None = None  # per-request budget override
     budget_policy: str | None = None  # per-request policy override
     provider_keys: dict[str, str] | None = None  # per-request provider key overrides
+    discovery_brief: dict | None = None  # Phase 1 — answers from the discovery form
 
 
 @router.post("/api/projects/{project_id}/pages/{slug}/generate")
@@ -135,6 +136,12 @@ async def start_generation(
         class _BudgetExceededError(Exception):  # type: ignore[no-redef]
             """Placeholder — never raised when prompture is missing."""
 
+    # Convert raw discovery answers into a structured DiscoveryBrief
+    brief = None
+    if req.discovery_brief:
+        from ...agents.discovery import brief_from_form
+        brief = brief_from_form(req.discovery_brief)
+
     async def _run():
         try:
             result = await pipeline.generate(
@@ -144,6 +151,7 @@ async def start_generation(
                 page_prompt=prompt,
                 max_cost=req.max_cost,
                 budget_policy=req.budget_policy,
+                discovery_brief=brief,
             )
             # Auto-save designer's StyleSpec back to the project
             if pipeline.style_spec_text:

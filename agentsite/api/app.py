@@ -16,7 +16,7 @@ from fastapi.staticfiles import StaticFiles
 
 from ..config import settings
 from . import deps
-from .routes import agents, assets, generate, models, preview, projects, providers
+from .routes import agents, assets, discovery, generate, models, preview, projects, providers
 from .websocket import ws_manager
 
 logger = logging.getLogger("agentsite.api")
@@ -111,6 +111,7 @@ def create_app(
     app.include_router(preview.router)
     app.include_router(providers.router)
     app.include_router(agents.router)
+    app.include_router(discovery.router)
 
     # Extra routers (e.g. auth, landing page)
     if extra_routers:

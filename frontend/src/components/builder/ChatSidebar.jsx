@@ -7,6 +7,7 @@ export default function ChatSidebar({
   messages,
   onSend,
   generating,
+  discoveryForm = null,
 }) {
   const scrollRef = useRef(null);
 
@@ -36,9 +37,11 @@ export default function ChatSidebar({
         {messages.map((msg, i) => (
           <ChatMessage key={i} message={msg} />
         ))}
+
+        {discoveryForm}
       </div>
 
-      <ChatInput onSend={onSend} disabled={generating} />
+      <ChatInput onSend={onSend} disabled={generating || !!discoveryForm} />
     </aside>
   );
 }

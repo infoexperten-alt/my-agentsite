@@ -8,6 +8,7 @@ import { getPreviewUrl, uploadAsset } from "../api/assets";
 import { getPage, createPage, listMessages, createMessage } from "../api/projects";
 import PageBuilderHeader from "../components/layout/PageBuilderHeader";
 import ChatSidebar from "../components/builder/ChatSidebar";
+import DiscoveryForm from "../components/builder/DiscoveryForm";
 import PreviewFrame from "../components/builder/PreviewFrame";
 import CodeView from "../components/builder/CodeView";
 import ZoomControls from "../components/builder/ZoomControls";
@@ -26,6 +27,7 @@ export default function PageBuilderPage() {
   const [activeVersion, setActiveVersion] = useState(null);
   const [refreshKey, setRefreshKey] = useState(0);
   const [viewMode, setViewMode] = useState("preview");
+  const [pendingBrief, setPendingBrief] = useState(null); // { text, image } awaiting discovery answers
   const prevGenerating = useRef(false);
 
   const page = pages.find((p) => p.slug === slug);
@@ -94,7 +96,9 @@ export default function PageBuilderPage() {
     ? getPreviewUrl(projectId, slug, activeVersion) + `?t=${refreshKey}`
     : getPreviewUrl(projectId, slug);
 
-  const handleSend = async ({ text, image }) => {
+  const isFirstBrief = (versions?.length || 0) === 0 && messages.every((m) => m.role !== "user");
+
+  const startBuild = async ({ text, image, brief }) => {
     let imageUrl = null;
     if (image) {
       try {
@@ -107,10 +111,7 @@ export default function PageBuilderPage() {
       role: "user",
       content: text,
       image: imageUrl,
-      time: new Date().toLocaleTimeString([], {
-        hour: "2-digit",
-        minute: "2-digit",
-      }),
+      time: new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }),
     };
     setMessages((prev) => [...prev, userMsg]);
 
@@ -124,7 +125,32 @@ export default function PageBuilderPage() {
       project?.model ||
       (models.models.length ? models.models[0].id : "openai/gpt-4o");
 
-    gen.start(slug, { prompt: text, model });
+    const payload = { prompt: text, model };
+    if (brief) payload.discovery_brief = brief;
+    gen.start(slug, payload);
+  };
+
+  const handleSend = async ({ text, image }) => {
+    if (isFirstBrief) {
+      // Defer until discovery form is answered (or skipped).
+      setPendingBrief({ text, image });
+      return;
+    }
+    await startBuild({ text, image });
+  };
+
+  const handleDiscoverySubmit = async (answers) => {
+    const pending = pendingBrief;
+    setPendingBrief(null);
+    if (!pending) return;
+    await startBuild({ ...pending, brief: answers });
+  };
+
+  const handleDiscoverySkip = async () => {
+    const pending = pendingBrief;
+    setPendingBrief(null);
+    if (!pending) return;
+    await startBuild(pending);
   };
 
   const getAgentLabel = useCallback((name) => {
@@ -236,6 +262,15 @@ export default function PageBuilderPage() {
           messages={messages}
           onSend={handleSend}
           generating={gen.generating}
+          discoveryForm={
+            pendingBrief ? (
+              <DiscoveryForm
+                initialPrompt={pendingBrief.text}
+                onSubmit={handleDiscoverySubmit}
+                onSkip={handleDiscoverySkip}
+              />
+            ) : null
+          }
         />
 
         <main className="flex-1 bg-[#0c0e14] relative flex flex-col items-center justify-center p-8 overflow-hidden">

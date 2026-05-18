@@ -19,7 +19,7 @@ from ..agents.orchestrator import (
     create_specialist_pipeline,
 )
 from ..config import settings
-from ..models import AgentConfig, AgentRun, PageOutput, Project, ReviewFeedback, SitePlan, StyleSpec, TechStack, WSEvent
+from ..models import AgentConfig, AgentRun, DiscoveryBrief, PageOutput, Project, ReviewFeedback, SitePlan, StyleSpec, TechStack, WSEvent
 from .project_manager import ProjectManager
 from .reasoning_patch import apply_reasoning_patch
 
@@ -232,6 +232,7 @@ class GenerationPipeline:
         review_threshold: int | None = None,
         cancel_event: asyncio.Event | None = None,
         conversation_context: str = "",
+        discovery_brief: DiscoveryBrief | None = None,
     ) -> GroupResult:
         """Run the generation pipeline for a single page version.
 
@@ -448,6 +449,17 @@ class GenerationPipeline:
             "written_files": written_files,
         }
 
+        # Phase 1 — surface the discovery brief (if any) before planning starts
+        discovery_brief_text = ""
+        if discovery_brief is not None:
+            from ..agents.discovery import render_brief
+
+            discovery_brief_text = render_brief(discovery_brief)
+            await self._emit(
+                "discovery_brief_submitted",
+                data={"brief": discovery_brief.model_dump(), "rendered": discovery_brief_text},
+            )
+
         await self._emit("phase_start", data={"phase": "planning", "slug": slug, "version": version_number})
 
         session_id = f"gen-{project.id}-{slug}-v{version_number}"
@@ -478,16 +490,20 @@ class GenerationPipeline:
                 on_agent_complete=_on_agent_complete,
                 on_agent_error=_on_agent_error,
             )
+            pm_prompt = page_prompt
+            if discovery_brief_text:
+                pm_prompt = f"{discovery_brief_text}\n\n---\n\nUser brief:\n{page_prompt}"
+
             pm_pipeline = AsyncSequentialGroup(
                 [(pm_agent, "{prompt}")],
                 callbacks=pm_callbacks,
-                state={"prompt": page_prompt},
+                state={"prompt": pm_prompt},
                 error_policy=ErrorPolicy.raise_on_error,
                 deps=deps,
             )
             _attach_streaming_callbacks(pm_pipeline, self._emit)
 
-            pm_result = await pm_pipeline.run(page_prompt)
+            pm_result = await pm_pipeline.run(pm_prompt)
             site_plan_text = pm_result.shared_state.get("site_plan", "")
             self.site_plan_text = site_plan_text
 
@@ -615,6 +631,7 @@ class GenerationPipeline:
             # --- Phase B: Run Designer standalone (with fallback) if needed ---
             initial_state = {
                 "prompt": page_prompt,
+                "discovery_brief": discovery_brief_text,
                 "site_plan": site_plan_text,
                 "project_dir": self._pm.project_dir(project.id),
                 "review_feedback": "",
@@ -638,7 +655,8 @@ class GenerationPipeline:
                 self._inject_driver(designer_agent, designer_model)
                 designer_prompt = (
                     "Design a visual style for this website:\n\n"
-                    f"Site Plan: {site_plan_text}\n\n"
+                    + (f"{discovery_brief_text}\n\n" if discovery_brief_text else "")
+                    + f"Site Plan: {site_plan_text}\n\n"
                     f"Logo URL: {project.logo_url or ''}\n"
                     f"Icon URL: {project.icon_url or ''}\n\n"
                     "Create a cohesive color scheme, typography, and spacing system."

@@ -16,6 +16,42 @@ from pydantic import BaseModel, Field
 # ------------------------------------------------------------------
 
 
+class DiscoveryBrief(BaseModel):
+    """30-second discovery answers — ported from open-design discovery form.
+
+    Captures what the user is building, who it's for, the brand context, and
+    rough scope before the PM agent runs. Fields are intentionally permissive
+    (defaults + lists) so partial answers still validate.
+    """
+
+    output: str = Field(
+        default="",
+        description=(
+            "Surface type. One of: 'slide_deck', 'web_prototype', 'app_prototype', "
+            "'dashboard', 'editorial', 'other'."
+        ),
+    )
+    platform: list[str] = Field(
+        default_factory=list,
+        description="Target platforms: 'responsive_web', 'desktop_web', 'ios', 'android', 'tablet', 'desktop_app', 'fixed_canvas'.",
+    )
+    audience: str = Field(default="", description="Who this is for (free text).")
+    tone: list[str] = Field(
+        default_factory=list,
+        description="Visual tone keywords (e.g. 'editorial', 'modern_minimal', 'playful', 'tech_utility', 'luxury', 'brutalist', 'human').",
+    )
+    brand_mode: str = Field(
+        default="pick_direction",
+        description="One of: 'pick_direction', 'brand_spec', 'reference_match'.",
+    )
+    scale: str = Field(default="", description="Rough scope (e.g. '1 landing + 3 sub-pages').")
+    constraints: str = Field(default="", description="Anything else: deadlines, must-use fonts, things to avoid.")
+    direction_id: str | None = Field(
+        default=None,
+        description="When brand_mode=='pick_direction' and the user has chosen one, the direction id (e.g. 'modern-minimal').",
+    )
+
+
 class TechStack(BaseModel):
     """Technology choices for a website build, decided by the PM agent."""
 
@@ -307,7 +343,8 @@ class WSEvent(BaseModel):
             "agent_thinking, agent_step, agent_iteration, agent_output, "
             "text_delta, tool_start, tool_end, "
             "error, file_written, generation_complete, "
-            "pipeline_plan, model_fallback, budget_exceeded"
+            "pipeline_plan, model_fallback, budget_exceeded, "
+            "discovery_form_requested, discovery_brief_submitted"
         )
     )
     agent: str = Field(default="", description="Agent name")
