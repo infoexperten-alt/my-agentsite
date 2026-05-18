@@ -26,6 +26,7 @@ class GenerateRequest(BaseModel):
     provider_keys: dict[str, str] | None = None  # per-request provider key overrides
     discovery_brief: dict | None = None  # Phase 1 — answers from the discovery form
     direction_id: str | None = None  # Phase 2 — chosen design direction id
+    inherits_from: str | None = None  # Phase 9 — design system id to extend
 
 
 @router.post("/api/projects/{project_id}/pages/{slug}/generate")
@@ -142,6 +143,15 @@ async def start_generation(
     if req.discovery_brief:
         from ...agents.discovery import brief_from_form
         brief = brief_from_form(req.discovery_brief)
+
+    # Phase 9 — top-level design-system inheritance request. Mark it on the
+    # project so the designer phase sees it without re-plumbing.
+    if req.inherits_from:
+        if project.style_spec is None:
+            from ...models import StyleSpec as _SS
+            project.style_spec = _SS()
+        project.style_spec.inherits_from = req.inherits_from
+        await repo.update(project)
 
     # Top-level direction_id wins over whatever was in the brief
     if req.direction_id:

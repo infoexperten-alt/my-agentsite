@@ -186,6 +186,15 @@ class StyleSpec(BaseModel):
     transition_speed: str = Field(default="150ms", description="Default transition duration")
     backdrop_blur: str = Field(default="8px", description="Backdrop blur amount")
 
+    # Phase 9 — design-system inheritance
+    inherits_from: str | None = Field(
+        default=None,
+        description=(
+            "ID of a bundled or user-saved design system. When set, the Designer "
+            "extends those tokens instead of inventing fresh ones."
+        ),
+    )
+
     # Phase 2 — direction-library binding
     direction_id: str | None = Field(
         default=None,

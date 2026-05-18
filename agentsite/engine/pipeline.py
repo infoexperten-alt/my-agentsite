@@ -750,9 +750,30 @@ class GenerationPipeline:
                 designer_agent = create_designer_agent_auto(designer_model)
                 _apply_agent_overrides(designer_agent, "designer", self._agent_configs)
                 self._inject_driver(designer_agent, designer_model)
+                # Phase 9 — if project.style_spec.inherits_from is set, load
+                # the bundled/user system and instruct the Designer to extend
+                # rather than invent.
+                inherits_block = ""
+                if project.style_spec and getattr(project.style_spec, "inherits_from", None):
+                    try:
+                        from ..design_systems import find_design_system as _find_ds
+                        _ds = _find_ds(project.style_spec.inherits_from)
+                        if _ds is not None:
+                            inherits_block = (
+                                "Inherit from this existing design system "
+                                f"(`{_ds['id']}`) — extend it, don't replace it. "
+                                "Match its palette, typography, and posture exactly; "
+                                "only add tokens the system doesn't already define.\n\n"
+                                f"## {_ds['name']}\n\n{_ds['description']}\n\n"
+                                "```css\n" + _ds["raw_css"] + "\n```\n\n"
+                            )
+                    except Exception:
+                        logger.debug("Design system inheritance lookup failed", exc_info=True)
+
                 designer_prompt = (
                     "Design a visual style for this website:\n\n"
                     + (f"{discovery_brief_text}\n\n" if discovery_brief_text else "")
+                    + inherits_block
                     + f"Site Plan: {site_plan_text}\n\n"
                     f"Logo URL: {project.logo_url or ''}\n"
                     f"Icon URL: {project.icon_url or ''}\n\n"
