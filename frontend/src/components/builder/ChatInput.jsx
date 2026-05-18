@@ -1,13 +1,22 @@
 import { useState, useRef } from "react";
-import { Image, ArrowRight } from "@phosphor-icons/react";
+import { Image, ArrowRight, Lightning } from "@phosphor-icons/react";
 
-export default function ChatInput({ onSend, disabled }) {
+export default function ChatInput({ onSend, onSteer, disabled, generating }) {
   const [text, setText] = useState("");
   const [imageFile, setImageFile] = useState(null);
   const fileRef = useRef(null);
 
+  // Steer mode lights up while generating: instead of starting a new run,
+  // the message is pushed to the in-flight pipeline via the WS mailbox.
+  const steerMode = !!generating && !!onSteer;
+
   const handleSend = () => {
     if (!text.trim() && !imageFile) return;
+    if (steerMode) {
+      onSteer(text.trim());
+      setText("");
+      return;
+    }
     onSend({ text: text.trim(), image: imageFile });
     setText("");
     setImageFile(null);
@@ -42,9 +51,13 @@ export default function ChatInput({ onSend, disabled }) {
             value={text}
             onChange={(e) => setText(e.target.value)}
             onKeyDown={handleKeyDown}
-            disabled={disabled}
+            disabled={disabled && !steerMode}
             className="w-full bg-transparent text-sm text-white placeholder-slate-500 resize-none outline-none p-2 h-20"
-            placeholder="Describe changes to the AI..."
+            placeholder={
+              steerMode
+                ? "Steer the in-flight build (e.g. 'make the headline punchier')…"
+                : "Describe changes to the AI..."
+            }
           />
           <div className="flex justify-between items-center px-2 pb-1">
             <div className="flex gap-2">
@@ -65,10 +78,18 @@ export default function ChatInput({ onSend, disabled }) {
             </div>
             <button
               onClick={handleSend}
-              disabled={disabled || (!text.trim() && !imageFile)}
-              className="bg-white text-slate-950 px-3 py-1.5 rounded-lg text-xs font-bold hover:bg-slate-200 transition-colors flex items-center gap-1 disabled:opacity-50"
+              disabled={(disabled && !steerMode) || (!text.trim() && !imageFile)}
+              className={`px-3 py-1.5 rounded-lg text-xs font-bold transition-colors flex items-center gap-1 disabled:opacity-50 ${
+                steerMode
+                  ? "bg-amber-400 text-slate-950 hover:bg-amber-300"
+                  : "bg-white text-slate-950 hover:bg-slate-200"
+              }`}
             >
-              Send <ArrowRight weight="bold" size={12} />
+              {steerMode ? (
+                <>Steer <Lightning weight="fill" size={12} /></>
+              ) : (
+                <>Send <ArrowRight weight="bold" size={12} /></>
+              )}
             </button>
           </div>
         </div>

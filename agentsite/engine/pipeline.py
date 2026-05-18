@@ -398,6 +398,25 @@ class GenerationPipeline:
                 except Exception:
                     pass
 
+            # Phase 7 — when the developer was a DeepAgent, snapshot its
+            # todo list and emit it for the live TodoStream UI.
+            if agent_key == "developer":
+                try:
+                    deep_state = getattr(result, "deep_state", None) or getattr(
+                        getattr(result, "agent", None), "deep_state", None
+                    )
+                    if deep_state is not None and getattr(deep_state, "todos", None):
+                        todos_payload = [
+                            t.to_dict() if hasattr(t, "to_dict") else dict(t)
+                            for t in deep_state.todos
+                        ]
+                        if todos_payload:
+                            await self._emit("todo_update", agent="developer", data={
+                                "todos": todos_payload,
+                            })
+                except Exception:
+                    pass
+
             # Capture developer/specialist output for fallback extraction
             _build_agents = {"developer", "markup", "style", "style_scss", "script"}
             if agent_key in _build_agents:

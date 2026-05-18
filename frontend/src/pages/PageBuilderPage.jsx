@@ -10,6 +10,7 @@ import PageBuilderHeader from "../components/layout/PageBuilderHeader";
 import ChatSidebar from "../components/builder/ChatSidebar";
 import DiscoveryForm from "../components/builder/DiscoveryForm";
 import DirectionPicker from "../components/builder/DirectionPicker";
+import TodoStream from "../components/builder/TodoStream";
 import PreviewFrame from "../components/builder/PreviewFrame";
 import CodeView from "../components/builder/CodeView";
 import ZoomControls from "../components/builder/ZoomControls";
@@ -285,7 +286,9 @@ export default function PageBuilderPage() {
         <ChatSidebar
           messages={messages}
           onSend={handleSend}
+          onSteer={gen.steer}
           generating={gen.generating}
+          todoStream={gen.generating ? <TodoStream todos={gen.todos} /> : null}
           discoveryForm={
             pendingBrief ? (
               <DiscoveryForm

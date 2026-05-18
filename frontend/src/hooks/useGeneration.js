@@ -13,6 +13,8 @@ export default function useGeneration(projectId) {
   const [parallelGroups, setParallelGroups] = useState(null);
   // Phase 6 — live srcdoc preview per page slug
   const [livePreview, setLivePreview] = useState({}); // slug -> { html, contentHash }
+  // Phase 7 — live todo list streamed from the deep-agent developer (if enabled)
+  const [todos, setTodos] = useState([]);
   const ws = useWebSocket(projectId);
   const versionRefreshRef = useRef(null);
   const projectRefreshRef = useRef(null);
@@ -82,6 +84,10 @@ export default function useGeneration(projectId) {
       }),
       ws.on("file_written", (msg) => {
         setFiles((prev) => [...prev, msg.data]);
+      }),
+      ws.on("todo_update", (msg) => {
+        const list = msg.data?.todos;
+        if (Array.isArray(list)) setTodos(list);
       }),
       ws.on("preview_update", (msg) => {
         const slug = msg.data?.page_slug;
@@ -153,6 +159,7 @@ export default function useGeneration(projectId) {
       setAgentMeta(null);
       setParallelGroups(null);
       setLivePreview({});
+      setTodos([]);
       ws.connect();
       try {
         await startGeneration(projectId, slug, data);
@@ -173,5 +180,10 @@ export default function useGeneration(projectId) {
     projectRefreshRef.current = fn;
   }, []);
 
-  return { generating, agents, files, generatedAssets, error, pipelineAgents, agentMeta, parallelGroups, livePreview, start, onVersionRefresh, onProjectRefresh };
+  const steer = useCallback((text) => {
+    if (!text || !text.trim()) return;
+    ws.send({ type: "steer", text: text.trim() });
+  }, [ws]);
+
+  return { generating, agents, files, generatedAssets, error, pipelineAgents, agentMeta, parallelGroups, livePreview, todos, start, steer, onVersionRefresh, onProjectRefresh };
 }

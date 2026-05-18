@@ -6,8 +6,10 @@ import { Sparkle } from "@phosphor-icons/react";
 export default function ChatSidebar({
   messages,
   onSend,
+  onSteer = null,
   generating,
   discoveryForm = null,
+  todoStream = null,
 }) {
   const scrollRef = useRef(null);
 
@@ -38,10 +40,16 @@ export default function ChatSidebar({
           <ChatMessage key={i} message={msg} />
         ))}
 
+        {todoStream}
         {discoveryForm}
       </div>
 
-      <ChatInput onSend={onSend} disabled={generating || !!discoveryForm} />
+      <ChatInput
+        onSend={onSend}
+        onSteer={onSteer}
+        generating={generating}
+        disabled={!!discoveryForm}
+      />
     </aside>
   );
 }
