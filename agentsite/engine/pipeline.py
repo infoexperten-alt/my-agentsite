@@ -366,12 +366,20 @@ class GenerationPipeline:
 
             # Phase 12 — surface refusal-like outputs as a WS warning so the
             # frontend can show a "try a different model" hint. Non-fatal —
-            # the existing fallback chain handles empty output too.
+            # the existing fallback chain handles empty output too. Also
+            # stamp the active AgentRun so it shows up in analytics later.
             if output_text:
                 try:
                     from .refusal import detect_refusal
                     sig = detect_refusal(output_text)
                     if sig.is_refusal:
+                        if run is not None:
+                            if not isinstance(run.output_summary, dict):
+                                run.output_summary = {}
+                            run.output_summary["refusal"] = {
+                                "reason": sig.reason,
+                                "matched": sig.matched[:200],
+                            }
                         await self._emit("refusal_detected", agent=agent_key, data={
                             "reason": sig.reason,
                             "matched": sig.matched,
