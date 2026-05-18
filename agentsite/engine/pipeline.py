@@ -300,7 +300,15 @@ class GenerationPipeline:
             agent_key = _agent_name_to_key(name)
             started_at = datetime.now(timezone.utc).isoformat()
             agent_model = self._agent_models.get(agent_key, "")
-            await self._emit("agent_start", agent=agent_key, data={"started_at": started_at, "model": agent_model})
+            # Phase 13 — record the routing strategy that picked this model
+            strategy = settings.agent_routing.get(agent_key, "")
+            if "/" in strategy:  # explicit model override — not a strategy
+                strategy = "explicit"
+            await self._emit("agent_start", agent=agent_key, data={
+                "started_at": started_at,
+                "model": agent_model,
+                "strategy": strategy,
+            })
             run = AgentRun(
                 project_id=project.id,
                 page_slug=slug,
@@ -308,6 +316,8 @@ class GenerationPipeline:
                 agent_name=agent_key,
                 status="running",
                 session_id=session_id,
+                strategy=strategy,
+                model=agent_model,
             )
             self._active_runs[name] = run
             self._run_start_times[name] = time.monotonic()

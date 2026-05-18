@@ -399,6 +399,8 @@ class AgentRun(BaseModel):
     reasoning: str = Field(default="")
     session_id: str = Field(default="")  # Prompture tracker session ID
     output_summary: dict = Field(default_factory=dict)
+    strategy: str = Field(default="", description="Routing strategy that picked this run's model")
+    model: str = Field(default="", description="Concrete model id used for this run")
 
 
 # ------------------------------------------------------------------

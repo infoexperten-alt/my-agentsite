@@ -47,54 +47,73 @@ def test_stylespec_inherits_from_optional():
 
 
 def test_design_systems_list_endpoint():
-    client = TestClient(create_app())
-    resp = client.get("/api/design-systems")
-    assert resp.status_code == 200
-    body = resp.json()
-    assert len(body) >= 4
-    assert {s["id"] for s in body} >= BUNDLED
+    with TestClient(create_app()) as client:
+        resp = client.get("/api/design-systems")
+        assert resp.status_code == 200
+        body = resp.json()
+        assert len(body) >= 4
+        assert {s["id"] for s in body} >= BUNDLED
 
 
 def test_design_system_detail_endpoint():
-    client = TestClient(create_app())
-    resp = client.get("/api/design-systems/linear")
-    assert resp.status_code == 200
-    body = resp.json()
-    assert body["id"] == "linear"
-    assert body["tokens"]["accent"] == "#5e6ad2"
-    assert "raw_css" in body
+    with TestClient(create_app()) as client:
+        resp = client.get("/api/design-systems/linear")
+        assert resp.status_code == 200
+        body = resp.json()
+        assert body["id"] == "linear"
+        assert body["tokens"]["accent"] == "#5e6ad2"
+        assert "raw_css" in body
 
 
 def test_design_system_404():
-    client = TestClient(create_app())
-    resp = client.get("/api/design-systems/not-real")
-    assert resp.status_code == 404
+    with TestClient(create_app()) as client:
+        resp = client.get("/api/design-systems/not-real")
+        assert resp.status_code == 404
 
 
 def test_save_user_system_roundtrip():
-    client = TestClient(create_app())
-    payload = {
-        "id": "mybrand",
-        "name": "My Brand",
-        "tokens_css": ":root { --bg: #fafafa; --fg: #111; --accent: #ff00aa; }",
-        "description": "User-saved test system",
-    }
-    resp = client.post("/api/design-systems", json=payload)
-    assert resp.status_code == 200
-    # It should show up in the list now
-    resp2 = client.get("/api/design-systems")
-    ids = {s["id"] for s in resp2.json()}
-    assert "mybrand" in ids
-    # And in detail
-    resp3 = client.get("/api/design-systems/mybrand")
-    assert resp3.status_code == 200
-    assert resp3.json()["source"] == "user"
+    with TestClient(create_app()) as client:
+        payload = {
+            "id": "mybrand_test_phase9",
+            "name": "My Brand",
+            "tokens_css": ":root { --bg: #fafafa; --fg: #111; --accent: #ff00aa; }",
+            "description": "User-saved test system",
+        }
+        resp = client.post("/api/design-systems", json=payload)
+        assert resp.status_code == 200
+        # It should show up in the list now
+        resp2 = client.get("/api/design-systems")
+        ids = {s["id"] for s in resp2.json()}
+        assert "mybrand_test_phase9" in ids
+        # And in detail
+        resp3 = client.get("/api/design-systems/mybrand_test_phase9")
+        assert resp3.status_code == 200
+        assert resp3.json()["source"] == "user"
+        # Cleanup
+        client.delete("/api/design-systems/mybrand_test_phase9")
 
 
 def test_save_user_system_validates():
-    client = TestClient(create_app())
-    resp = client.post("/api/design-systems", json={"id": "", "name": "x", "tokens_css": ""})
-    assert resp.status_code == 400
+    with TestClient(create_app()) as client:
+        resp = client.post("/api/design-systems", json={"id": "", "name": "x", "tokens_css": ""})
+        assert resp.status_code == 400
+
+
+def test_delete_bundled_system_is_blocked():
+    with TestClient(create_app()) as client:
+        resp = client.delete("/api/design-systems/linear")
+        assert resp.status_code == 400
+
+
+def test_save_collision_with_bundled_id_rejected():
+    with TestClient(create_app()) as client:
+        payload = {
+            "id": "linear",
+            "name": "Pretend Linear",
+            "tokens_css": ":root { --bg: #fff; }",
+        }
+        resp = client.post("/api/design-systems", json=payload)
+        assert resp.status_code == 409
 
 
 def test_palette_preview_pulls_swatches():

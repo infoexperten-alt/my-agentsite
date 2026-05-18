@@ -53,6 +53,7 @@ async def lifespan(app: FastAPI):
     deps.agent_run_repo = deps.AgentRunRepository(deps.db)
     deps.message_repo = deps.MessageRepository(deps.db)
     deps.memory_repo = deps.MemoryRepository(deps.db)
+    deps.design_system_repo = deps.DesignSystemRepository(deps.db)
     # Backfill costs for runs recorded before cost tracking was added
     try:
         updated = await deps.agent_run_repo.backfill_costs()

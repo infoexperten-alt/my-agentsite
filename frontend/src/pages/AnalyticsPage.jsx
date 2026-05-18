@@ -12,6 +12,7 @@ import TokenChart from "../components/analytics/TokenChart";
 import CostByAgentChart from "../components/analytics/CostByAgentChart";
 import QualityRatchetChart from "../components/analytics/QualityRatchetChart";
 import RefusalRateChart from "../components/analytics/RefusalRateChart";
+import CostByRoutingChart from "../components/analytics/CostByRoutingChart";
 import ActivityTable from "../components/analytics/ActivityTable";
 import { useAnalytics } from "../hooks/useAnalytics";
 
@@ -144,9 +145,10 @@ export default function AnalyticsPage() {
             <RefusalRateChart runs={runs} loading={loading} />
           </div>
 
-          {/* Quality row */}
+          {/* Quality + routing row */}
           <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 h-96">
             <QualityRatchetChart loading={loading} />
+            <CostByRoutingChart runs={runs} loading={loading} />
           </div>
 
           {/* Activity table */}

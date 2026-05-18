@@ -69,6 +69,15 @@ CREATE TABLE IF NOT EXISTS agent_configs (
     updated_at TEXT NOT NULL
 );
 
+CREATE TABLE IF NOT EXISTS design_systems (
+    id TEXT PRIMARY KEY,
+    name TEXT NOT NULL,
+    description TEXT NOT NULL DEFAULT '',
+    tokens_css TEXT NOT NULL DEFAULT '',
+    source TEXT NOT NULL DEFAULT 'user',
+    created_at TEXT NOT NULL
+);
+
 CREATE TABLE IF NOT EXISTS project_memories (
     id TEXT PRIMARY KEY,
     project_id TEXT NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
@@ -93,7 +102,9 @@ CREATE TABLE IF NOT EXISTS agent_runs (
     cost REAL NOT NULL DEFAULT 0.0,
     session_id TEXT DEFAULT '',
     output_summary TEXT DEFAULT '{}',
-    user_id TEXT
+    user_id TEXT,
+    strategy TEXT DEFAULT '',
+    model TEXT DEFAULT ''
 );
 """
 
@@ -195,6 +206,16 @@ class Database:
         if columns and "user_id" not in columns:
             logger.info("Adding 'user_id' column to projects table...")
             await self._conn.execute("ALTER TABLE projects ADD COLUMN user_id TEXT")
+            await self._conn.commit()
+
+        # Phase 13 — add strategy + model columns to agent_runs if missing
+        if ar_columns and "strategy" not in ar_columns:
+            logger.info("Adding 'strategy' column to agent_runs table...")
+            await self._conn.execute("ALTER TABLE agent_runs ADD COLUMN strategy TEXT DEFAULT ''")
+            await self._conn.commit()
+        if ar_columns and "model" not in ar_columns:
+            logger.info("Adding 'model' column to agent_runs table...")
+            await self._conn.execute("ALTER TABLE agent_runs ADD COLUMN model TEXT DEFAULT ''")
             await self._conn.commit()
 
         # Add user_id column to agent_runs table if missing
