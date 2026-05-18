@@ -13,6 +13,9 @@ import useProject from "../hooks/useProject";
 import * as projectsApi from "../api/projects";
 import * as assetsApi from "../api/assets";
 import Spinner from "../components/shared/Spinner";
+import BrandExtractor from "../components/project/BrandExtractor";
+import DesignSystemPicker from "../components/project/DesignSystemPicker";
+import MemoryPanel from "../components/project/MemoryPanel";
 
 const DEFAULT_STYLE_SPEC = {
   // Colors
@@ -794,6 +797,16 @@ export default function ProjectBrandPage() {
 
           {project && (
             <>
+              <hr className="border-slate-800 my-10" />
+              <div className="space-y-6">
+                <BrandExtractor projectId={projectId} onExtracted={refresh} />
+                <DesignSystemPicker
+                  projectId={projectId}
+                  currentId={project.style_spec?.inherits_from}
+                  onPick={refresh}
+                />
+                <MemoryPanel projectId={projectId} />
+              </div>
               <hr className="border-slate-800 my-10" />
               <KnowledgeBase projectId={projectId} />
             </>

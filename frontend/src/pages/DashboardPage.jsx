@@ -5,6 +5,7 @@ import { useApp } from "../context/AppContext";
 import ProjectCard from "../components/dashboard/ProjectCard";
 import CreateProjectCard from "../components/dashboard/CreateProjectCard";
 import ProjectFilterBar from "../components/dashboard/ProjectFilterBar";
+import TemplateGallery from "../components/dashboard/TemplateGallery";
 import Modal from "../components/shared/Modal";
 import Spinner from "../components/shared/Spinner";
 
@@ -75,6 +76,14 @@ export default function DashboardPage() {
           </div>
           <ProjectFilterBar active={filter} onChange={setFilter} />
         </div>
+
+        <TemplateGallery
+          onPick={(t) => {
+            setNewName(t.name);
+            setNewDesc(t.prompt);
+            setShowCreate(true);
+          }}
+        />
 
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
           <CreateProjectCard onClick={() => setShowCreate(true)} />
