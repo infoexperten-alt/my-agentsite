@@ -9,6 +9,7 @@ import { getPage, createPage, listMessages, createMessage } from "../api/project
 import PageBuilderHeader from "../components/layout/PageBuilderHeader";
 import ChatSidebar from "../components/builder/ChatSidebar";
 import DiscoveryForm from "../components/builder/DiscoveryForm";
+import DirectionPicker from "../components/builder/DirectionPicker";
 import PreviewFrame from "../components/builder/PreviewFrame";
 import CodeView from "../components/builder/CodeView";
 import ZoomControls from "../components/builder/ZoomControls";
@@ -28,6 +29,7 @@ export default function PageBuilderPage() {
   const [refreshKey, setRefreshKey] = useState(0);
   const [viewMode, setViewMode] = useState("preview");
   const [pendingBrief, setPendingBrief] = useState(null); // { text, image } awaiting discovery answers
+  const [pendingDirection, setPendingDirection] = useState(null); // { text, image, brief } awaiting direction pick
   const prevGenerating = useRef(false);
 
   const page = pages.find((p) => p.slug === slug);
@@ -98,7 +100,7 @@ export default function PageBuilderPage() {
 
   const isFirstBrief = (versions?.length || 0) === 0 && messages.every((m) => m.role !== "user");
 
-  const startBuild = async ({ text, image, brief }) => {
+  const startBuild = async ({ text, image, brief, directionId }) => {
     let imageUrl = null;
     if (image) {
       try {
@@ -127,6 +129,7 @@ export default function PageBuilderPage() {
 
     const payload = { prompt: text, model };
     if (brief) payload.discovery_brief = brief;
+    if (directionId) payload.direction_id = directionId;
     gen.start(slug, payload);
   };
 
@@ -143,12 +146,33 @@ export default function PageBuilderPage() {
     const pending = pendingBrief;
     setPendingBrief(null);
     if (!pending) return;
+    const wantsDirection =
+      (answers?.brand || answers?.brand_mode || "pick_direction") === "pick_direction" &&
+      !answers?.direction_id;
+    if (wantsDirection) {
+      setPendingDirection({ ...pending, brief: answers });
+      return;
+    }
     await startBuild({ ...pending, brief: answers });
   };
 
   const handleDiscoverySkip = async () => {
     const pending = pendingBrief;
     setPendingBrief(null);
+    if (!pending) return;
+    await startBuild(pending);
+  };
+
+  const handleDirectionPick = async (directionId) => {
+    const pending = pendingDirection;
+    setPendingDirection(null);
+    if (!pending) return;
+    await startBuild({ ...pending, directionId });
+  };
+
+  const handleDirectionSkip = async () => {
+    const pending = pendingDirection;
+    setPendingDirection(null);
     if (!pending) return;
     await startBuild(pending);
   };
@@ -268,6 +292,11 @@ export default function PageBuilderPage() {
                 initialPrompt={pendingBrief.text}
                 onSubmit={handleDiscoverySubmit}
                 onSkip={handleDiscoverySkip}
+              />
+            ) : pendingDirection ? (
+              <DirectionPicker
+                onPick={handleDirectionPick}
+                onSkip={handleDirectionSkip}
               />
             ) : null
           }

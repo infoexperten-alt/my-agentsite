@@ -25,6 +25,7 @@ class GenerateRequest(BaseModel):
     budget_policy: str | None = None  # per-request policy override
     provider_keys: dict[str, str] | None = None  # per-request provider key overrides
     discovery_brief: dict | None = None  # Phase 1 — answers from the discovery form
+    direction_id: str | None = None  # Phase 2 — chosen design direction id
 
 
 @router.post("/api/projects/{project_id}/pages/{slug}/generate")
@@ -141,6 +142,16 @@ async def start_generation(
     if req.discovery_brief:
         from ...agents.discovery import brief_from_form
         brief = brief_from_form(req.discovery_brief)
+
+    # Top-level direction_id wins over whatever was in the brief
+    if req.direction_id:
+        if brief is None:
+            from ...models import DiscoveryBrief
+            brief = DiscoveryBrief(brand_mode="pick_direction", direction_id=req.direction_id)
+        else:
+            brief.direction_id = req.direction_id
+            if not brief.brand_mode:
+                brief.brand_mode = "pick_direction"
 
     async def _run():
         try:

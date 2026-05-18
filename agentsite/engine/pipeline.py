@@ -645,7 +645,33 @@ class GenerationPipeline:
                 "conversation_context": conversation_context,
             }
 
-            if "designer" in required_agents:
+            # Phase 2 — if the user picked a deterministic direction, synthesize
+            # StyleSpec from it and skip the Designer agent entirely.
+            direction_synthesized = False
+            if (
+                discovery_brief is not None
+                and discovery_brief.brand_mode == "pick_direction"
+                and discovery_brief.direction_id
+            ):
+                from ..agents.directions import find_direction, synthesize_style_spec
+
+                _direction = find_direction(discovery_brief.direction_id)
+                if _direction is not None:
+                    _spec = synthesize_style_spec(_direction)
+                    self.style_spec_text = _spec.model_dump_json()
+                    initial_state["style_spec"] = self.style_spec_text
+                    await self._emit("style_spec_ready", data={
+                        "style_spec": self.style_spec_text,
+                        "parsed": True,
+                        "source": "direction",
+                        "direction_id": _direction.id,
+                    })
+                    direction_synthesized = True
+                    if "designer" in required_agents:
+                        required_agents = [a for a in required_agents if a != "designer"]
+                    logger.info("Phase 2: synthesized StyleSpec from direction '%s'", _direction.id)
+
+            if not direction_synthesized and "designer" in required_agents:
                 from ..agents.designer import create_designer_agent_auto
 
                 designer_model = self._agent_models["designer"]
@@ -709,11 +735,13 @@ class GenerationPipeline:
                 remaining_agents = [a for a in required_agents if a != "designer"]
             else:
                 remaining_agents = list(required_agents)
-                # Use project's existing style_spec or sensible defaults
-                if project.style_spec:
-                    initial_state["style_spec"] = project.style_spec.model_dump_json()
-                else:
-                    initial_state["style_spec"] = StyleSpec().model_dump_json()
+                # If the direction synthesizer already set a style_spec, keep it.
+                # Otherwise fall back to project default or empty.
+                if "style_spec" not in initial_state:
+                    if project.style_spec:
+                        initial_state["style_spec"] = project.style_spec.model_dump_json()
+                    else:
+                        initial_state["style_spec"] = StyleSpec().model_dump_json()
 
             # --- Cancellation check after Designer ---
             if cancel_event and cancel_event.is_set():

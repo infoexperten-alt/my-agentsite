@@ -179,6 +179,18 @@ class StyleSpec(BaseModel):
     transition_speed: str = Field(default="150ms", description="Default transition duration")
     backdrop_blur: str = Field(default="8px", description="Backdrop blur amount")
 
+    # Phase 2 — direction-library binding
+    direction_id: str | None = Field(
+        default=None,
+        description="When the StyleSpec was synthesized from a `DesignDirection`, its id.",
+    )
+    bg_oklch: str | None = Field(default=None, description="Background in OKLch (parallel to background_color).")
+    surface_oklch: str | None = Field(default=None, description="Surface in OKLch.")
+    fg_oklch: str | None = Field(default=None, description="Foreground/text in OKLch.")
+    muted_oklch: str | None = Field(default=None, description="Muted text/border in OKLch.")
+    border_oklch: str | None = Field(default=None, description="Border in OKLch.")
+    accent_oklch: str | None = Field(default=None, description="Accent in OKLch.")
+
 
 class GeneratedFile(BaseModel):
     """A single file produced by the Developer Agent."""
