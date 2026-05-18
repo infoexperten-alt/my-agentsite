@@ -19,6 +19,7 @@ CREATE TABLE IF NOT EXISTS projects (
     model TEXT NOT NULL DEFAULT '',
     style_spec TEXT,
     agent_overrides TEXT,
+    user_id TEXT,
     created_at TEXT NOT NULL,
     updated_at TEXT NOT NULL
 );
@@ -91,7 +92,8 @@ CREATE TABLE IF NOT EXISTS agent_runs (
     output_tokens INTEGER NOT NULL DEFAULT 0,
     cost REAL NOT NULL DEFAULT 0.0,
     session_id TEXT DEFAULT '',
-    output_summary TEXT DEFAULT '{}'
+    output_summary TEXT DEFAULT '{}',
+    user_id TEXT
 );
 """
 
