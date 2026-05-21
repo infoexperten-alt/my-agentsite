@@ -1400,16 +1400,14 @@ class GenerationPipeline:
                 self._try_extract_raw_html(project_id, slug, version, cleaned_text)
 
     def _extract_fenced_blocks(self, project_id: str, slug: str, version: int, text: str) -> bool:
-        """Extract markdown-fenced code blocks (```html, ```css, ```js) and write them.
+        """Salvage ```html/css/js fenced blocks via prompture and write them.
 
         Returns True if at least one file was written.
         """
-        import re
+        from prompture import extract_fenced_blocks
 
-        # Match ```html ... ```, ```css ... ```, ```javascript/js ... ```
-        pattern = r"```(\w+)\s*\n([\s\S]*?)```"
-        matches = re.findall(pattern, text)
-        if not matches:
+        blocks = extract_fenced_blocks(text, languages=["html", "css", "js", "javascript"])
+        if not blocks:
             return False
 
         lang_to_file = {
@@ -1418,16 +1416,12 @@ class GenerationPipeline:
             "js": "script.js",
             "javascript": "script.js",
         }
-        wrote_any = False
-        # Track which filenames have been used to avoid overwriting
         used_names: set[str] = set()
-
-        for lang, content in matches:
-            lang_lower = lang.lower()
-            filename = lang_to_file.get(lang_lower)
+        wrote_any = False
+        for block in blocks:
+            filename = lang_to_file.get(block.language)
             if not filename:
                 continue
-            # If we already wrote this filename, append a suffix
             if filename in used_names:
                 base, ext = filename.rsplit(".", 1)
                 counter = 2
@@ -1435,45 +1429,34 @@ class GenerationPipeline:
                     counter += 1
                 filename = f"{base}_{counter}.{ext}"
             used_names.add(filename)
-            self._pm.write_version_file(project_id, slug, version, filename, content.strip())
-            logger.info("Extracted fenced %s block as %s (%d bytes)", lang_lower, filename, len(content))
+            self._pm.write_version_file(project_id, slug, version, filename, block.content)
+            logger.info(
+                "Extracted fenced %s block as %s (%d bytes)",
+                block.language,
+                filename,
+                len(block.content),
+            )
             wrote_any = True
-
         return wrote_any
 
     def _try_extract_raw_html(self, project_id: str, slug: str, version: int, text: str) -> None:
-        """Attempt to extract raw HTML from agent output as a last resort."""
-        import re
+        """Salvage a raw HTML document via prompture as a last resort."""
+        from prompture import extract_html_document
 
-        # Strip markdown code fences if wrapping the entire HTML
-        stripped = re.sub(r"^```\w*\s*\n", "", text.strip())
-        stripped = re.sub(r"\n```\s*$", "", stripped)
-
-        # Look for HTML content (<!DOCTYPE or <html)
-        html_match = re.search(
-            r"(<!DOCTYPE html[\s\S]*?</html>|<html[\s\S]*?</html>)",
-            stripped,
-            re.IGNORECASE,
-        )
-        if html_match:
-            html_content = html_match.group(1)
-            self._pm.write_version_file(project_id, slug, version, "index.html", html_content)
-            logger.info("Extracted raw HTML fallback as index.html (%d bytes)", len(html_content))
-
-            # Also try to extract <style> blocks into styles.css
-            style_blocks = re.findall(r"<style[^>]*>([\s\S]*?)</style>", html_content, re.IGNORECASE)
-            if style_blocks:
-                css_content = "\n\n".join(style_blocks)
-                self._pm.write_version_file(project_id, slug, version, "styles.css", css_content)
-                logger.info("Extracted CSS fallback as styles.css (%d bytes)", len(css_content))
-
-            # Also try to extract <script> blocks into script.js
-            script_blocks = re.findall(r"<script[^>]*>([\s\S]*?)</script>", html_content, re.IGNORECASE)
-            # Filter out empty scripts and external src references
-            script_blocks = [s.strip() for s in script_blocks if s.strip()]
-            if script_blocks:
-                js_content = "\n\n".join(script_blocks)
-                self._pm.write_version_file(project_id, slug, version, "script.js", js_content)
-                logger.info("Extracted JS fallback as script.js (%d bytes)", len(js_content))
-        else:
+        doc = extract_html_document(text)
+        if not doc.found:
             logger.error("No HTML content found in developer output (length=%d)", len(text))
+            return
+
+        self._pm.write_version_file(project_id, slug, version, "index.html", doc.html)
+        logger.info("Extracted raw HTML fallback as index.html (%d bytes)", len(doc.html))
+
+        if doc.styles:
+            css_content = "\n\n".join(doc.styles)
+            self._pm.write_version_file(project_id, slug, version, "styles.css", css_content)
+            logger.info("Extracted CSS fallback as styles.css (%d bytes)", len(css_content))
+
+        if doc.scripts:
+            js_content = "\n\n".join(doc.scripts)
+            self._pm.write_version_file(project_id, slug, version, "script.js", js_content)
+            logger.info("Extracted JS fallback as script.js (%d bytes)", len(js_content))

@@ -43,7 +43,10 @@ def _sanitize(text: str) -> str:
         return ""
     try:
         from prompture.security import PromptInjectionDetector, PIIRedactor  # type: ignore
-        text = PIIRedactor().redact(text)
+        result = PIIRedactor().redact(text)
+        # Prompture 1.1.x returns a RedactionResult dataclass; older
+        # versions returned the redacted string directly.
+        text = getattr(result, "text", result)
         det = PromptInjectionDetector()
         verdict = det.detect(text)
         if getattr(verdict, "is_injection", False):
@@ -138,10 +141,12 @@ def _detect_fonts(text: str) -> dict[str, str]:
 
 def extract_from_text(raw: str) -> dict:
     """Extract token dict from a blob of HTML / CSS / brand book text."""
-    text = _sanitize(raw)
-    hexes = [h for h in (_normalize_hex(m) for m in _HEX_RE.findall(text)) if h]
+    # Hex extraction runs on the raw text: prompture's PII redactor
+    # treats six-digit runs (e.g. '#111111') as phone numbers and
+    # rewrites them, which would strip legitimate brand colors.
+    hexes = [h for h in (_normalize_hex(m) for m in _HEX_RE.findall(raw or "")) if h]
     palette = _classify_palette(hexes)
-    fonts = _detect_fonts(text)
+    fonts = _detect_fonts(_sanitize(raw))
     return {**palette, **fonts}
 
 
