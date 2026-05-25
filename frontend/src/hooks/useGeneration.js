@@ -148,19 +148,26 @@ export default function useGeneration(projectId) {
     return () => unsubs.forEach((fn) => fn());
   }, [ws]);
 
+  // Reset state and open the WebSocket so pipeline events arrive.
+  // Used by both direct gen.start() and the chat-driven flow (where the
+  // chat agent's start_build tool kicks off generation on the backend).
+  const prepareBuildStream = useCallback(() => {
+    setGenerating(true);
+    setAgents({});
+    setFiles([]);
+    setGeneratedAssets([]);
+    setError(null);
+    setPipelineAgents(null);
+    setAgentMeta(null);
+    setParallelGroups(null);
+    setLivePreview({});
+    setTodos([]);
+    ws.connect();
+  }, [ws]);
+
   const start = useCallback(
     async (slug, data) => {
-      setGenerating(true);
-      setAgents({});
-      setFiles([]);
-      setGeneratedAssets([]);
-      setError(null);
-      setPipelineAgents(null);
-      setAgentMeta(null);
-      setParallelGroups(null);
-      setLivePreview({});
-      setTodos([]);
-      ws.connect();
+      prepareBuildStream();
       try {
         await startGeneration(projectId, slug, data);
       } catch (err) {
@@ -169,7 +176,7 @@ export default function useGeneration(projectId) {
         ws.disconnect();
       }
     },
-    [projectId, ws]
+    [projectId, ws, prepareBuildStream]
   );
 
   const onVersionRefresh = useCallback((fn) => {
@@ -185,5 +192,5 @@ export default function useGeneration(projectId) {
     ws.send({ type: "steer", text: text.trim() });
   }, [ws]);
 
-  return { generating, agents, files, generatedAssets, error, pipelineAgents, agentMeta, parallelGroups, livePreview, todos, start, steer, onVersionRefresh, onProjectRefresh };
+  return { generating, agents, files, generatedAssets, error, pipelineAgents, agentMeta, parallelGroups, livePreview, todos, start, steer, prepareBuildStream, onVersionRefresh, onProjectRefresh };
 }

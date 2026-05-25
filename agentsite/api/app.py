@@ -16,7 +16,7 @@ from fastapi.staticfiles import StaticFiles
 
 from ..config import settings
 from . import deps
-from .routes import agents, assets, brand, design_systems, directions, discovery, generate, memory, models, preview, projects, prompt_templates, providers, skills
+from .routes import agents, assets, brand, chat, design_systems, directions, discovery, generate, memory, models, preview, projects, prompt_templates, providers, skills
 from .websocket import ws_manager
 
 logger = logging.getLogger("agentsite.api")
@@ -108,6 +108,7 @@ def create_app(
     # API routes
     app.include_router(projects.router)
     app.include_router(generate.router)
+    app.include_router(chat.router)
     app.include_router(models.router)
     app.include_router(assets.router)
     app.include_router(preview.router)

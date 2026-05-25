@@ -6,11 +6,11 @@ import useGeneration from "../hooks/useGeneration";
 import { useApp } from "../context/AppContext";
 import { getPreviewUrl, uploadAsset } from "../api/assets";
 import { getPage, createPage, listMessages, createMessage } from "../api/projects";
+import { streamChat } from "../api/chat";
 import PageBuilderHeader from "../components/layout/PageBuilderHeader";
 import ChatSidebar from "../components/builder/ChatSidebar";
 import DiscoveryForm from "../components/builder/DiscoveryForm";
 import DirectionPicker from "../components/builder/DirectionPicker";
-import TodoStream from "../components/builder/TodoStream";
 import PreviewFrame from "../components/builder/PreviewFrame";
 import CodeView from "../components/builder/CodeView";
 import ZoomControls from "../components/builder/ZoomControls";
@@ -135,13 +135,66 @@ export default function PageBuilderPage() {
     gen.start(slug, payload);
   };
 
+  const handleChat = async ({ text }) => {
+    const userMsg = {
+      role: "user",
+      content: text,
+      time: new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }),
+    };
+    setMessages((prev) => [...prev, userMsg]);
+    // Backend chat endpoint persists the user message — no createMessage call here.
+
+    const liveId = `chat-${Date.now()}`;
+    setMessages((prev) => [
+      ...prev,
+      { role: "agent", content: "", _liveId: liveId },
+    ]);
+
+    let agentText = "";
+    streamChat(projectId, slug, text, {
+      onEvent: (event) => {
+        if (event.type === "text") {
+          agentText += event.content;
+          setMessages((prev) =>
+            prev.map((m) => (m._liveId === liveId ? { ...m, content: agentText } : m))
+          );
+        } else if (event.type === "tool_call" && event.name === "start_build") {
+          // Agent is about to fire the pipeline — open the WS so progress events arrive.
+          gen.prepareBuildStream();
+        } else if (event.type === "done") {
+          setMessages((prev) =>
+            prev.map((m) => (m._liveId === liveId ? { role: "agent", content: agentText } : m))
+          );
+        } else if (event.type === "error") {
+          setMessages((prev) =>
+            prev.map((m) =>
+              m._liveId === liveId ? { role: "agent", content: `Error: ${event.message}` } : m
+            )
+          );
+        }
+      },
+      onError: (err) => {
+        setMessages((prev) =>
+          prev.map((m) =>
+            m._liveId === liveId ? { role: "agent", content: `Connection error: ${err.message}` } : m
+          )
+        );
+      },
+    });
+  };
+
   const handleSend = async ({ text, image }) => {
     if (isFirstBrief) {
       // Defer until discovery form is answered (or skipped).
       setPendingBrief({ text, image });
       return;
     }
-    await startBuild({ text, image });
+    if (image) {
+      // Image uploads bypass the chat agent and trigger a build directly.
+      await startBuild({ text, image });
+      return;
+    }
+    await handleChat({ text });
   };
 
   const handleDiscoverySubmit = async (answers) => {
@@ -290,9 +343,7 @@ export default function PageBuilderPage() {
         <ChatSidebar
           messages={messages}
           onSend={handleSend}
-          onSteer={gen.steer}
           generating={gen.generating}
-          todoStream={gen.generating ? <TodoStream todos={gen.todos} /> : null}
           discoveryForm={
             pendingBrief ? (
               <DiscoveryForm

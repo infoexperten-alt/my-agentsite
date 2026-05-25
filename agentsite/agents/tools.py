@@ -2,14 +2,15 @@
 
 from __future__ import annotations
 
+import base64
 import json
 import logging
 import os
 import uuid
 from pathlib import Path
 
-import httpx
 from prompture import RunContext, ToolRegistry
+from prompture.drivers.img_gen_registry import get_img_gen_driver_for_model
 
 logger = logging.getLogger("agentsite.tools")
 
@@ -218,30 +219,16 @@ def generate_image(ctx: RunContext, prompt: str, filename: str) -> str:
     if ext not in _ALLOWED_IMAGE_EXTENSIONS:
         return f"Error: extension '{ext}' not allowed. Use one of: {sorted(_ALLOWED_IMAGE_EXTENSIONS)}"
 
-    api_key = os.environ.get("OPENAI_API_KEY", "")
-    if not api_key:
+    if not os.environ.get("OPENAI_API_KEY"):
         return "Error: OPENAI_API_KEY not set — cannot generate images"
 
     try:
-        resp = httpx.post(
-            "https://api.openai.com/v1/images/generations",
-            headers={"Authorization": f"Bearer {api_key}"},
-            json={
-                "model": "dall-e-3",
-                "prompt": prompt,
-                "n": 1,
-                "size": "1024x1024",
-                "response_format": "url",
-            },
-            timeout=60,
-        )
-        resp.raise_for_status()
-        image_url = resp.json()["data"][0]["url"]
-
-        # Download the image bytes
-        img_resp = httpx.get(image_url, timeout=30)
-        img_resp.raise_for_status()
-        img_data = img_resp.content
+        driver = get_img_gen_driver_for_model("openai/dall-e-3")
+        resp = driver.generate_image(prompt, {"size": "1024x1024", "n": 1})
+        images = resp.get("images") or []
+        if not images:
+            return "Error: image generation returned no images"
+        img_data = base64.b64decode(images[0].data)
     except Exception as exc:
         logger.warning("Image generation failed: %s", exc)
         return f"Error generating image: {exc}"
