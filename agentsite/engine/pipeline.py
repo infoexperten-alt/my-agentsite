@@ -708,6 +708,32 @@ class GenerationPipeline:
                 has_specialists = any(k in required_agents for k in ("markup", "style", "style_scss", "script"))
                 if not has_specialists and "developer" not in required_agents:
                     required_agents.append("developer")
+
+                # Defensive guard: some PM models (notably weaker ones)
+                # omit 'designer' from required_agents even on fresh builds.
+                # For any new build where the user hasn't picked a direction
+                # AND the project has no inherited style, the Designer must
+                # run — otherwise the developer invents brand identity from
+                # scratch and the output is rarely on-brand.
+                _has_direction = (
+                    discovery_brief is not None
+                    and discovery_brief.brand_mode == "pick_direction"
+                    and bool(discovery_brief.direction_id)
+                )
+                _has_inherited = bool(
+                    project.style_spec is not None
+                    and getattr(project.style_spec, "inherits_from", None)
+                )
+                if (
+                    "designer" not in required_agents
+                    and not _has_direction
+                    and not _has_inherited
+                ):
+                    required_agents.insert(0, "designer")
+                    logger.info(
+                        "Pipeline guard: PM omitted 'designer'; reinstating it "
+                        "for fresh build (no direction, no inherited style)."
+                    )
             else:
                 logger.debug("Could not parse required_agents from PM output, using defaults")
 

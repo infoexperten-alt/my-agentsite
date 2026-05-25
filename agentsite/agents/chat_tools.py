@@ -23,6 +23,10 @@ async def start_build(
     ctx: RunContext,
     prompt: str,
     page_slug: str = "home",
+    audience: str = "",
+    visual_tone: list[str] | None = None,
+    direction_id: str | None = None,
+    constraints: str = "",
 ) -> str:
     """Kick off generation of a page from a prompt.
 
@@ -30,14 +34,44 @@ async def start_build(
     page or site. Returns the version number once the background task
     is scheduled — progress streams over the project's WebSocket.
 
+    ALWAYS populate ``audience`` and ``visual_tone`` from the user's
+    request when you can (e.g. a luxury booking landing page →
+    audience="premium-charter customers",
+    visual_tone=["luxury", "modern_minimal"]).  Empty values force the
+    pipeline to guess and often produce off-brand output.
+
     Args:
         prompt: What the user wants built.
         page_slug: Page identifier (default ``"home"``).
+        audience: Who the site is for, in plain language (e.g.
+            "premium-charter customers"). Empty when the
+            user hasn't said.
+        visual_tone: Tone keywords from this fixed set:
+            ``"editorial"``, ``"modern_minimal"``, ``"playful"``,
+            ``"tech_utility"``, ``"luxury"``, ``"brutalist"``,
+            ``"human"``. Pick 1-2.
+        direction_id: When the user explicitly named a design direction
+            (or the chat surfaced one), the id (e.g.
+            ``"modern-minimal"``, ``"luxury-refined"``). When set,
+            Prompture synthesises StyleSpec from the direction and
+            skips the Designer agent — only use it when the user
+            picked a direction.
+        constraints: Free-text constraints (deadlines, must-use fonts,
+            things to avoid). Empty when none.
     """
     deps: dict[str, Any] = ctx.deps
     project_id = deps.get("project_id")
     if not project_id:
         return "Error: no project_id in context"
+
+    discovery_brief: dict[str, Any] | None = None
+    if audience or visual_tone or constraints:
+        discovery_brief = {
+            "audience": audience,
+            "tone": list(visual_tone or []),
+            "constraints": constraints,
+            "brand_mode": "pick_direction",
+        }
 
     try:
         result = await start_generation_task(
@@ -52,6 +86,8 @@ async def start_build(
             pm=deps["pm"],
             model=deps.get("model", ""),
             provider_keys=deps.get("provider_keys"),
+            discovery_brief=discovery_brief,
+            direction_id=direction_id,
         )
     except ValueError as exc:
         return f"Error: {exc}"
@@ -63,6 +99,9 @@ async def start_build(
         "status": "started",
         "page_slug": page_slug,
         "version_number": result["version_number"],
+        "audience": audience,
+        "visual_tone": list(visual_tone or []),
+        "direction_id": direction_id,
         "note": "Pipeline running. Progress is broadcast over the WebSocket.",
     })
 
