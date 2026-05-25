@@ -11,7 +11,10 @@ import {
   CaretRight,
   CaretDown,
   Code,
+  PuzzlePiece,
 } from "@phosphor-icons/react";
+import { getBlock } from "../../api/blocks";
+import BlockConfigForm from "./BlockConfigForm";
 
 /* ----------------------------- style helpers ----------------------------- */
 
@@ -66,10 +69,27 @@ export default function EditInspector({
   selections = [],
   onApply,
   onApplyMany,
+  onRerenderBlock,
   onClose,
   saveState,
 }) {
   const multi = selections.length > 1;
+  const blockId = !multi && selection?.block;
+  const blockDef = blockId ? getBlock(blockId) : null;
+  const blockInstance = !multi && selection?.attributes?.["data-ve-block-instance"];
+  // Read the current config off the instance — htmlstudio stamps it
+  // into data-ve-config as base64 JSON.
+  const blockConfig = useMemo(() => {
+    if (!blockId) return null;
+    const raw = selection?.attributes?.["data-ve-config"];
+    if (!raw) return {};
+    try {
+      const json = typeof atob === "function" ? atob(raw) : "";
+      return JSON.parse(json);
+    } catch {
+      return {};
+    }
+  }, [blockId, selection?.attributes]);
   const [content, setContent] = useState({ text: "", href: "", linkLabel: "", src: "", alt: "" });
   const [open, setOpen] = useState({ content: true, type: true, layout: true, fx: true, advanced: false });
   const [rawStyle, setRawStyle] = useState("");
@@ -174,6 +194,34 @@ export default function EditInspector({
             Bulk edit — Typography / Layout / Appearance apply to all {selections.length} elements.
             Content / link / image edits are disabled.
           </div>
+        )}
+
+        {/* BLOCK CONFIG — shown when the selected element is a block instance */}
+        {blockDef && blockInstance && (
+          <Section
+            icon={<PuzzlePiece size={14} />}
+            label={`Block — ${blockDef.name}`}
+            open={true}
+            onToggle={() => {}}
+          >
+            <p className="text-[11px] text-slate-500 mb-2">{blockDef.description}</p>
+            <BlockConfigForm
+              definition={blockDef}
+              config={blockConfig || {}}
+              onCommit={(newConfig) =>
+                onRerenderBlock?.({
+                  blockId: blockDef.id,
+                  instanceId: blockInstance,
+                  targetId: selection.id,
+                  config: newConfig,
+                })
+              }
+            />
+            <p className="mt-3 text-[10px] text-slate-600 leading-relaxed">
+              Block fields rewrite the entire instance. Use the sections below to
+              override generic CSS on child elements.
+            </p>
+          </Section>
         )}
 
         {/* CONTENT — only meaningful for single-select */}

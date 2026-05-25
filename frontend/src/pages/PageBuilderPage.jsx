@@ -15,8 +15,10 @@ import PreviewFrame from "../components/builder/PreviewFrame";
 import CodeView from "../components/builder/CodeView";
 import ZoomControls from "../components/builder/ZoomControls";
 import EditInspector from "../components/builder/EditInspector";
+import BlockPalette from "../components/builder/BlockPalette";
 import useVisualEdit from "../hooks/useVisualEdit";
-import { PencilSimple } from "@phosphor-icons/react";
+import { render as renderBlock, rerender as rerenderBlock } from "../api/blocks";
+import { PencilSimple, Plus } from "@phosphor-icons/react";
 
 export default function PageBuilderPage() {
   const { projectId, slug } = useParams();
@@ -34,6 +36,7 @@ export default function PageBuilderPage() {
   const [refreshKey, setRefreshKey] = useState(0);
   const [viewMode, setViewMode] = useState("preview");
   const [editMode, setEditMode] = useState(false);
+  const [paletteOpen, setPaletteOpen] = useState(false);
   const visualEdit = useVisualEdit({
     projectId,
     slug,
@@ -431,20 +434,32 @@ export default function PageBuilderPage() {
             )}
           </div>
 
-          {/* Edit-mode toggle (only meaningful when a version has been generated) */}
+          {/* Edit-mode toggle + Insert block (only when a version has been generated) */}
           {viewMode === "preview" && activeVersion && (
-            <button
-              onClick={() => setEditMode((v) => !v)}
-              className={`absolute top-4 right-4 z-20 inline-flex items-center gap-1.5 px-3 py-1.5 rounded text-xs font-semibold transition-colors border ${
-                editMode
-                  ? "bg-brand-500 border-brand-400 text-white"
-                  : "bg-slate-900/80 border-slate-800 text-slate-300 hover:text-white"
-              }`}
-              title={editMode ? "Exit edit mode" : "Visual edit (htmlstudio)"}
-            >
-              <PencilSimple size={12} weight={editMode ? "fill" : "regular"} />
-              {editMode ? "Editing" : "Edit"}
-            </button>
+            <div className="absolute top-4 right-4 z-20 flex gap-2">
+              {editMode && (
+                <button
+                  onClick={() => setPaletteOpen(true)}
+                  className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded text-xs font-semibold transition-colors border bg-slate-900/80 border-slate-800 text-slate-300 hover:text-white hover:border-brand-500/60"
+                  title="Insert a block"
+                >
+                  <Plus size={12} weight="bold" />
+                  Block
+                </button>
+              )}
+              <button
+                onClick={() => setEditMode((v) => !v)}
+                className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded text-xs font-semibold transition-colors border ${
+                  editMode
+                    ? "bg-brand-500 border-brand-400 text-white"
+                    : "bg-slate-900/80 border-slate-800 text-slate-300 hover:text-white"
+                }`}
+                title={editMode ? "Exit edit mode" : "Visual edit (htmlstudio)"}
+              >
+                <PencilSimple size={12} weight={editMode ? "fill" : "regular"} />
+                {editMode ? "Editing" : "Edit"}
+              </button>
+            </div>
           )}
 
           <ZoomControls zoom={zoom} onZoomChange={setZoom} />
@@ -456,11 +471,47 @@ export default function PageBuilderPage() {
             selections={visualEdit.selections}
             onApply={visualEdit.applyPatch}
             onApplyMany={visualEdit.applyPatches}
+            onRerenderBlock={({ blockId, instanceId, targetId, config }) => {
+              // Re-render the block from the new config (preserving instanceId)
+              // and replace the existing instance via set-outer-html.
+              const html = rerenderBlock(blockId, config, instanceId);
+              visualEdit.applyPatch({ kind: "set-outer-html", id: targetId, html });
+            }}
             onClose={visualEdit.clearSelection}
             saveState={visualEdit.saveState}
           />
         )}
       </div>
+
+      <BlockPalette
+        open={paletteOpen}
+        selectionLabel={
+          visualEdit.selection
+            ? `<${visualEdit.selection.tag}> ${visualEdit.selection.id}`
+            : null
+        }
+        onClose={() => setPaletteOpen(false)}
+        onInsert={(def) => {
+          // v0.3 requires a selection — set-outer-html replaces it with
+          // the rendered block. Without a selection there's no anchor to
+          // patch against (the tagger doesn't stamp <body>). We surface
+          // this by showing a friendly warning instead of silently
+          // doing something destructive.
+          if (!visualEdit.selection) {
+            window.alert(
+              "Pick an element first — the new block will replace it. Tip: click the section you want to swap, then open the palette.",
+            );
+            return;
+          }
+          const html = renderBlock(def.id, {});
+          visualEdit.applyPatch({
+            kind: "set-outer-html",
+            id: visualEdit.selection.id,
+            html,
+          });
+          setPaletteOpen(false);
+        }}
+      />
     </div>
   );
 }

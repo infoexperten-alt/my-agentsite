@@ -13,6 +13,11 @@ from typing import Any, Literal
 
 from prompture import RunContext, ToolRegistry
 
+from ..engine.blocks import (
+    BUILTIN_BLOCKS as _BUILTIN_BLOCKS,
+    get_block as _get_block,
+    render_block as _render_block,
+)
 from ..engine.generation_runner import start_generation_task
 from ..engine.html_query import (
     find_all as _html_find_all,
@@ -428,9 +433,73 @@ async def get_children(ctx: RunContext, id: str) -> str:
     return json.dumps(_html_get_children(source, id))
 
 
-# Edit mode: agent can patch the selected element AND query structure.
-# start_build / steer_build are deliberately excluded — rebuilding
-# the page is the opposite of what an edit-mode user wants.
+# ---------------------------------------------------------------------------
+# Edit-mode block tools — let the agent insert pre-built sections (hero,
+# CTA banner, feature grid, testimonial) instead of writing every layout
+# from scratch. The agent's flow:
+#   1. list_blocks() → see what's available
+#   2. render_block(block_id, config) → get the HTML string
+#   3. patch(kind='set-outer-html', id=<parent.id>, html=<rendered>)
+# ---------------------------------------------------------------------------
+
+
+async def list_blocks(ctx: RunContext) -> str:  # noqa: ARG001 — ctx kept for API symmetry
+    """List every available reusable block (hero, CTA, feature grid, etc).
+
+    Use this BEFORE `render_block` to discover block ids + their declared
+    editable fields. Returns a compact JSON listing — just metadata, no
+    templates.
+    """
+    out = [
+        {
+            "id": b["id"],
+            "name": b["name"],
+            "category": b["category"],
+            "description": b["description"],
+            "fields": [
+                {"key": f["key"], "type": f["type"], "label": f.get("label", f["key"])}
+                for f in b["fields"]
+            ],
+        }
+        for b in _BUILTIN_BLOCKS
+    ]
+    return json.dumps(out)
+
+
+async def render_block(  # noqa: ARG001 — ctx kept for API symmetry
+    ctx: RunContext,
+    block_id: str,
+    config: dict[str, Any] | None = None,
+) -> str:
+    """Render a block to HTML with the given config — ready to feed into
+    a ``patch(kind='set-outer-html', html=...)`` call.
+
+    Args:
+        block_id: One of the ids returned by ``list_blocks`` (e.g.
+            ``'hero-split'``, ``'cta-banner'``).
+        config: Field values overriding the block's declared defaults.
+            Any field you leave out keeps its default. Example:
+            ``{'heading': 'New product', 'accent': '#16a34a'}``.
+
+    Returns:
+        JSON ``{"html": "<section …>…</section>"}`` — the agent then
+        issues a ``patch`` with this HTML to insert the block at the
+        chosen location.
+    """
+    definition = _get_block(block_id)
+    if definition is None:
+        return json.dumps({"error": f"Unknown block_id: {block_id}"})
+    try:
+        html = _render_block(definition, config or {})
+    except Exception as exc:
+        return json.dumps({"error": f"render failed: {exc}"})
+    return json.dumps({"html": html, "block_id": block_id})
+
+
+# Edit mode: agent can patch the selected element, query structure,
+# and insert pre-built blocks. start_build / steer_build deliberately
+# excluded — rebuilding the page is the opposite of what an edit-mode
+# user wants.
 edit_registry = ToolRegistry()
 edit_registry.register(patch)
 edit_registry.register(read_page_file)
@@ -439,3 +508,5 @@ edit_registry.register(get_tree)
 edit_registry.register(find_closest)
 edit_registry.register(get_parent)
 edit_registry.register(get_children)
+edit_registry.register(list_blocks)
+edit_registry.register(render_block)
