@@ -166,6 +166,9 @@ export default function PageBuilderPage() {
             mode: true,
             version: activeVersion,
             selection: visualEdit.selection || null,
+            selections: visualEdit.selections && visualEdit.selections.length > 0
+              ? visualEdit.selections
+              : undefined,
           }
         : null;
 
@@ -372,6 +375,7 @@ export default function PageBuilderPage() {
           generating={gen.generating}
           editMode={editMode && viewMode === "preview"}
           editSelection={visualEdit.selection}
+          editSelections={visualEdit.selections}
           discoveryForm={
             pendingBrief ? (
               <DiscoveryForm
@@ -449,8 +453,10 @@ export default function PageBuilderPage() {
         {editMode && viewMode === "preview" && (
           <EditInspector
             selection={visualEdit.selection}
+            selections={visualEdit.selections}
             onApply={visualEdit.applyPatch}
-            onClose={() => visualEdit.setSelection(null)}
+            onApplyMany={visualEdit.applyPatches}
+            onClose={visualEdit.clearSelection}
             saveState={visualEdit.saveState}
           />
         )}

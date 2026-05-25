@@ -14,6 +14,15 @@ from typing import Any, Literal
 from prompture import RunContext, ToolRegistry
 
 from ..engine.generation_runner import start_generation_task
+from ..engine.html_query import (
+    find_all as _html_find_all,
+    find_by_id as _html_find_by_id,
+    find_closest as _html_find_closest,
+    get_children as _html_get_children,
+    get_parent as _html_get_parent,
+    get_tree as _html_get_tree,
+    load_current_source as _html_load_source,
+)
 from ..engine.interrupt import mailbox
 
 logger = logging.getLogger("agentsite.chat_tools")
@@ -314,9 +323,119 @@ chat_registry.register(list_versions)
 chat_registry.register(read_page_file)
 chat_registry.register(get_build_status)
 
-# Edit mode: agent can only patch the selected element (and read source for
-# context). start_build / steer_build are deliberately excluded — rebuilding
+# ---------------------------------------------------------------------------
+# Edit-mode discovery tools — let the agent reason about element relationships
+# before patching. All read-only. They run BeautifulSoup against the current
+# on-disk source so the agent can do things like "find every button in the
+# hero section" without round-tripping a query through the iframe bridge.
+# ---------------------------------------------------------------------------
+
+
+def _edit_source(ctx: RunContext) -> str | None:
+    """Load the HTML of the version the user is currently editing.
+
+    Looks at ``ctx.deps['edit_context']`` (populated by chat.py when the
+    user is in edit mode) for the slug + version, then reads via the
+    PageManager.
+    """
+    edit_ctx = ctx.deps.get("edit_context") or {}
+    if not edit_ctx.get("mode"):
+        return None
+    project_id = ctx.deps.get("project_id")
+    slug = ctx.deps.get("current_page_slug")
+    version = edit_ctx.get("version")
+    pm = ctx.deps.get("pm")
+    if not (project_id and slug and version and pm):
+        return None
+    try:
+        return _html_load_source(pm, project_id, slug, int(version))
+    except FileNotFoundError:
+        return None
+
+
+async def find(ctx: RunContext, selector: str, limit: int = 20) -> str:
+    """Find elements in the current page matching a CSS selector.
+
+    Use this BEFORE patching when the user says "all of the buttons" or
+    "every card in the pricing section" — you need the list of ids to
+    issue patches against. Only elements that already carry a
+    ``data-ve-id`` are returned.
+
+    Args:
+        selector: Any CSS selector, e.g. ``"button"``, ``"section h2"``,
+            ``"[data-ve-block=hero] a"``, ``".cta"``.
+        limit: Max results (default 20). Keep the agent from drowning
+            the context with hundreds of matches.
+
+    Returns:
+        JSON list of ``{id, tag, kind, attributes, text?, block?}``.
+        Empty list when nothing matches or no edit context.
+    """
+    source = _edit_source(ctx)
+    if source is None:
+        return json.dumps({"error": "Not in edit mode — no source to query"})
+    matches = _html_find_all(source, selector, limit=int(limit))
+    return json.dumps(matches)
+
+
+async def get_tree(ctx: RunContext, id: str, depth: int = 2) -> str:
+    """Get a structural tree of an element and its descendants.
+
+    Use this to understand the layout before bulk edits — e.g. before
+    "make all the section headings the same color" you'd call
+    ``get_tree('p-0', depth=3)`` to see what's inside.
+
+    Args:
+        id: ``data-ve-id`` of the root element for the tree.
+        depth: How many levels deep to traverse (default 2, max 5).
+    """
+    source = _edit_source(ctx)
+    if source is None:
+        return json.dumps({"error": "Not in edit mode — no source to query"})
+    tree = _html_get_tree(source, id, max_depth=min(int(depth), 5))
+    if tree is None:
+        return json.dumps({"error": f"Element not found: {id}"})
+    return json.dumps(tree)
+
+
+async def find_closest(ctx: RunContext, from_id: str, selector: str) -> str:
+    """Walk up from ``from_id`` to the nearest ancestor matching ``selector``.
+
+    Example: ``find_closest('p-0-1-2-3', '[data-ve-block]')`` returns
+    the block container that owns the selected element.
+    """
+    source = _edit_source(ctx)
+    if source is None:
+        return json.dumps({"error": "Not in edit mode — no source to query"})
+    found = _html_find_closest(source, from_id, selector)
+    return json.dumps(found) if found else json.dumps({"error": "No matching ancestor"})
+
+
+async def get_parent(ctx: RunContext, id: str) -> str:
+    """Immediate parent element of ``id``."""
+    source = _edit_source(ctx)
+    if source is None:
+        return json.dumps({"error": "Not in edit mode — no source to query"})
+    p = _html_get_parent(source, id)
+    return json.dumps(p) if p else json.dumps({"error": "No parent (root)"})
+
+
+async def get_children(ctx: RunContext, id: str) -> str:
+    """Direct element children of ``id``."""
+    source = _edit_source(ctx)
+    if source is None:
+        return json.dumps({"error": "Not in edit mode — no source to query"})
+    return json.dumps(_html_get_children(source, id))
+
+
+# Edit mode: agent can patch the selected element AND query structure.
+# start_build / steer_build are deliberately excluded — rebuilding
 # the page is the opposite of what an edit-mode user wants.
 edit_registry = ToolRegistry()
 edit_registry.register(patch)
 edit_registry.register(read_page_file)
+edit_registry.register(find)
+edit_registry.register(get_tree)
+edit_registry.register(find_closest)
+edit_registry.register(get_parent)
+edit_registry.register(get_children)

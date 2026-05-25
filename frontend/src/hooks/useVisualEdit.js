@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { tagHtml, untagHtml, injectBridge, applyPatch } from "htmlstudio";
+import { tagHtml, untagHtml, injectBridge, applyPatch, applyPatches } from "htmlstudio";
 import { fetchRawHtml, saveEditedHtml } from "../api/edit.js";
 
 /**
@@ -9,18 +9,25 @@ import { fetchRawHtml, saveEditedHtml } from "../api/edit.js";
  *   1. fetch raw HTML from /preview
  *   2. inject a <base href> so relative asset URLs still resolve, tag, inject the bridge
  *   3. expose `srcDoc` for PreviewFrame
- *   4. listen to postMessage events from the bridge, expose `selection`
- *   5. on patch: applyPatch → update srcDoc → debounce PUT to backend
+ *   4. listen to postMessage events from the bridge, expose `selection` / `selections`
+ *   5. on patch: applyPatch(es) → update srcDoc → debounce PUT to backend
  *
  * Set `enabled=false` and the hook is a no-op (no fetch, no listener).
+ *
+ * Selection model:
+ *   - `selection` — the currently-focused single element (null when in multi-mode)
+ *   - `selections` — array (>= 1 when multi-select is active via shift-click)
+ *   - Inspector should prefer `selections` when length > 1, fall back to `selection`.
  */
 export default function useVisualEdit({ projectId, slug, version, enabled }) {
   const [taggedSource, setTaggedSource] = useState(null);
   const [srcDoc, setSrcDoc] = useState(null);
   const [selection, setSelection] = useState(null);
+  const [selections, setSelections] = useState([]); // multi-select (shift-click)
   const [ready, setReady] = useState(false);
   const [saveState, setSaveState] = useState({ status: "idle", error: null });
   const saveTimer = useRef(null);
+  const previewFrameRef = useRef(null); // exposed for host → iframe commands (query, highlight, clear)
 
   // Build a bridged srcDoc from a (tagged) source string.
   const buildSrcDoc = useCallback(
@@ -44,6 +51,7 @@ export default function useVisualEdit({ projectId, slug, version, enabled }) {
       setTaggedSource(null);
       setSrcDoc(null);
       setSelection(null);
+      setSelections([]);
       setReady(false);
       return;
     }
@@ -73,9 +81,16 @@ export default function useVisualEdit({ projectId, slug, version, enabled }) {
     const onMessage = (e) => {
       const msg = e.data;
       if (!msg || msg.channel !== "ve") return;
-      if (msg.type === "select") setSelection(msg.payload);
-      else if (msg.type === "hover") {/* available if a breadcrumb panel wants it */}
-      else if (msg.type === "dblclick-text") {
+      if (msg.type === "select") {
+        setSelection(msg.payload);
+        setSelections([]);
+      } else if (msg.type === "select-multi") {
+        const arr = Array.isArray(msg.payload) ? msg.payload : [];
+        setSelections(arr);
+        setSelection(null);
+      } else if (msg.type === "hover") {
+        /* available if a breadcrumb panel wants it */
+      } else if (msg.type === "dblclick-text") {
         applyAndPersist({ kind: "set-text", id: msg.payload.id, value: msg.payload.value });
       }
     };
@@ -121,12 +136,50 @@ export default function useVisualEdit({ projectId, slug, version, enabled }) {
     [buildSrcDoc, scheduleSave],
   );
 
+  // Apply a sequence of patches atomically — used by the inspector for
+  // bulk operations on multi-select. Bails on first error (mirrors
+  // htmlstudio's applyPatches behavior).
+  const applyManyAndPersist = useCallback(
+    (patches) => {
+      if (!Array.isArray(patches) || patches.length === 0) return;
+      setTaggedSource((current) => {
+        if (!current) return current;
+        const r = applyPatches(current, patches);
+        if (!r.ok) {
+          console.warn("htmlstudio applyPatches failed:", r.error);
+          return current;
+        }
+        setSrcDoc(buildSrcDoc(r.source));
+        scheduleSave(r.source);
+        return r.source;
+      });
+    },
+    [buildSrcDoc, scheduleSave],
+  );
+
+  // Clear all selection state and tell the iframe to drop its outlines.
+  const clearSelection = useCallback(() => {
+    setSelection(null);
+    setSelections([]);
+    if (previewFrameRef.current?.contentWindow) {
+      previewFrameRef.current.contentWindow.postMessage(
+        { channel: "ve", type: "clear" },
+        "*",
+      );
+    }
+  }, []);
+
   return {
-    srcDoc,           // pass to <iframe srcDoc={...} />
-    selection,        // currently selected element info or null
-    setSelection,     // for closing the inspector
+    srcDoc,
+    selection,        // single-select (null when multi-select is active)
+    selections,       // multi-select array (length 0 when single-select)
+    setSelection,
+    setSelections,
+    clearSelection,
     applyPatch: applyAndPersist,
+    applyPatches: applyManyAndPersist,
     ready,
     saveState,
+    previewFrameRef,  // attach to the iframe so the hook can post commands
   };
 }

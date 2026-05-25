@@ -1,6 +1,6 @@
 {
   "name": "htmlstudio",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "HTML-source-of-truth visual editor primitives (tag, bridge, patch) — the post-generation edit layer for AgentSite and other AI website builders.",
   "type": "module",
   "main": "./dist/index.js",
@@ -22,6 +22,10 @@
     "./patches": {
       "types": "./dist/patches.d.ts",
       "import": "./dist/patches.js"
+    },
+    "./query": {
+      "types": "./dist/query.d.ts",
+      "import": "./dist/query.js"
     }
   },
   "files": ["dist", "README.md", "LICENSE"],

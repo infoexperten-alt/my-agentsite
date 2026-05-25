@@ -83,6 +83,13 @@ EDIT_MODE_SYSTEM_PROMPT = (
     "You are AgentSite's visual edit assistant. The user has the visual "
     "editor open and is asking you to TWEAK what they have selected — "
     "not rebuild the page.\n\n"
+    "Available tools:\n"
+    "  • patch — apply a visual edit (the only mutation tool)\n"
+    "  • find(selector, limit=20) — list elements matching a CSS selector\n"
+    "  • get_tree(id, depth=2) — structural tree of an element's descendants\n"
+    "  • find_closest(from_id, selector) — walk up to the nearest matching ancestor\n"
+    "  • get_parent(id) / get_children(id) — immediate relatives\n"
+    "  • read_page_file — read raw file contents\n\n"
     "Use the `patch` tool to apply changes. One call per logical change. "
     "Examples:\n"
     "  - 'make it blue and bigger' → patch(kind='set-style', id=<selected.id>, "
@@ -93,16 +100,25 @@ EDIT_MODE_SYSTEM_PROMPT = (
     "styles={'border-radius': '9999px'})\n"
     "  - 'open this link in a new tab' → patch(kind='set-attributes', "
     "id=<selected.id>, attributes={'target': '_blank', 'rel': 'noopener'})\n\n"
-    "ALWAYS pull the target id from the [Edit mode — selected: ...] "
-    "header in the user's message. Never invent ids.\n\n"
+    "BULK EDITS — when the user says 'all the buttons' / 'every card' / "
+    "'each section heading', FIRST call `find` to get the list of ids, "
+    "THEN call `patch` once per id. Example: 'make all the buttons rounded' "
+    "→ find('button') → for each result, patch(kind='set-style', id=<r.id>, "
+    "styles={'border-radius': '9999px'}).\n\n"
+    "ALWAYS pull the target id from the [Selected: ...] header in the "
+    "user's message OR from a previous `find` / `get_tree` / `get_parent` "
+    "result. Never invent ids.\n\n"
+    "If the user references 'this section' or 'the parent', use "
+    "`find_closest` or `get_parent` to resolve before patching.\n\n"
     "If the user asks for something that needs new markup (e.g. 'add an "
     "icon next to the text'), use set-outer-html with the current element "
     "wrapped/extended.\n\n"
-    "If nothing is selected, ASK the user to click the element they want "
-    "to change — do not guess.\n\n"
+    "If nothing is selected and the request is element-specific (not a "
+    "bulk operation), ASK the user to click the element they want to "
+    "change — do not guess.\n\n"
     "NEVER call start_build — the user is not asking for a rebuild. If "
     "they want a full redesign, tell them to exit edit mode first.\n"
-    "NEVER narrate what you are about to do — just call the tool. After "
+    "NEVER narrate what you are about to do — just make the calls. After "
     "patching, one short sentence confirming what changed is fine."
 )
 
@@ -111,6 +127,7 @@ class EditContext(BaseModel):
     mode: bool = False
     version: int | None = None
     selection: dict[str, Any] | None = None
+    selections: list[dict[str, Any]] = []  # multi-select via shift-click
 
 
 class ChatRequest(BaseModel):
@@ -186,9 +203,22 @@ async def chat_stream(
     in_edit_mode = bool(edit_ctx and edit_ctx.mode)
 
     if in_edit_mode:
+        # Expose edit context to discovery tools (find / get_tree / etc.)
+        agent_deps["edit_context"] = edit_ctx.model_dump() if edit_ctx else {}
         header_parts = [f"[Project: {project_id} | Current page: {slug} | Edit mode]"]
+        multi = edit_ctx.selections if edit_ctx and edit_ctx.selections else []
         sel = edit_ctx.selection if edit_ctx else None
-        if sel:
+        if multi:
+            ids = [s.get("id", "?") for s in multi]
+            tags = sorted({s.get("tag", "?") for s in multi})
+            header_parts.append(
+                f"[Multi-selected: {len(multi)} elements | tags={','.join(tags)} | "
+                f"ids={', '.join(ids[:10])}{'…' if len(ids) > 10 else ''}]"
+            )
+            header_parts.append(
+                "Apply one `patch` per id when the user asks for a bulk change."
+            )
+        elif sel:
             header_parts.append(
                 f"[Selected: <{sel.get('tag', '?')}> "
                 f"id={sel.get('id', '?')} "
@@ -208,7 +238,10 @@ async def chat_stream(
             if sel_src:
                 header_parts.append(f"Current image src: {sel_src}")
         else:
-            header_parts.append("[Selected: none — ask the user to click an element]")
+            header_parts.append(
+                "[Selected: none — ask the user to click an element, "
+                "or use `find` if the request is a bulk operation]"
+            )
         if edit_ctx and edit_ctx.version is not None:
             header_parts.append(f"[Editing version: v{edit_ctx.version}]")
         framed_prompt = "\n".join(header_parts) + f"\n\n{message}"

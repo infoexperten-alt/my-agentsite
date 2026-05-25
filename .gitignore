@@ -11,6 +11,8 @@ __pycache__/
 build/
 develop-eggs/
 dist/
+# Vendored htmlstudio dist IS source of truth for Docker builds — track it.
+!frontend/vendor/htmlstudio/dist/
 downloads/
 eggs/
 .eggs/

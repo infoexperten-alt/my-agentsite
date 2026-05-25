@@ -61,14 +61,26 @@ const DISPLAYS = ["block", "inline", "inline-block", "flex", "grid", "none"];
 
 /* -------------------------------- component ------------------------------ */
 
-export default function EditInspector({ selection, onApply, onClose, saveState }) {
+export default function EditInspector({
+  selection,
+  selections = [],
+  onApply,
+  onApplyMany,
+  onClose,
+  saveState,
+}) {
+  const multi = selections.length > 1;
   const [content, setContent] = useState({ text: "", href: "", linkLabel: "", src: "", alt: "" });
   const [open, setOpen] = useState({ content: true, type: true, layout: true, fx: true, advanced: false });
   const [rawStyle, setRawStyle] = useState("");
 
+  // In multi-select mode use the first element's styles as the "shared" view —
+  // the user is editing all of them, so applying a value sets that property
+  // across the set even if their starting styles differ.
+  const styleSource = multi ? selections[0] : selection;
   const styles = useMemo(
-    () => parseStyle(selection?.attributes?.style || ""),
-    [selection?.attributes?.style],
+    () => parseStyle(styleSource?.attributes?.style || ""),
+    [styleSource?.attributes?.style],
   );
 
   useEffect(() => {
@@ -83,7 +95,7 @@ export default function EditInspector({ selection, onApply, onClose, saveState }
     setRawStyle(selection.attributes?.style || "");
   }, [selection]);
 
-  if (!selection) {
+  if (!selection && !multi) {
     return (
       <aside className="w-96 border-l border-slate-800 bg-slate-900 p-5 text-slate-400 text-sm flex flex-col gap-3">
         <div className="flex items-center gap-2 text-slate-300 font-semibold">
@@ -97,30 +109,75 @@ export default function EditInspector({ selection, onApply, onClose, saveState }
     );
   }
 
+  // setStyle / clearStyle route through onApply for single-select and
+  // onApplyMany for multi-select (one patch per selected id, applied
+  // atomically by the hook).
   const setStyle = (prop, value) => {
-    onApply({ kind: "set-style", id: selection.id, styles: { [prop]: value } });
+    if (multi) {
+      const patches = selections.map((s) => ({
+        kind: "set-style",
+        id: s.id,
+        styles: { [prop]: value },
+      }));
+      onApplyMany?.(patches);
+    } else {
+      onApply({ kind: "set-style", id: selection.id, styles: { [prop]: value } });
+    }
   };
   const clearStyle = (prop) => setStyle(prop, "");
+
+  const setAttrs = (attributes) => {
+    if (multi) {
+      const patches = selections.map((s) => ({
+        kind: "set-attributes",
+        id: s.id,
+        attributes,
+      }));
+      onApplyMany?.(patches);
+    } else {
+      onApply({ kind: "set-attributes", id: selection.id, attributes });
+    }
+  };
 
   const toggle = (k) => setOpen((o) => ({ ...o, [k]: !o[k] }));
 
   return (
     <aside className="w-96 border-l border-slate-800 bg-slate-900 text-slate-300 text-sm flex flex-col">
       <header className="flex items-center justify-between px-4 py-3 border-b border-slate-800 sticky top-0 bg-slate-900 z-10">
-        <div>
-          <div className="text-[10px] font-mono text-slate-500">{selection.id}</div>
-          <div className="font-semibold">
-            <span className="text-brand-400">&lt;{selection.tag}&gt;</span>
-            <span className="text-[10px] text-slate-500 ml-1.5 uppercase tracking-wide">{selection.kind}</span>
+        {multi ? (
+          <div>
+            <div className="text-[10px] font-mono text-purple-400 uppercase tracking-wide">multi-select</div>
+            <div className="font-semibold">
+              <span className="text-purple-300">{selections.length} elements</span>
+              <span className="text-[10px] text-slate-500 ml-1.5 uppercase tracking-wide">
+                {sharedTagOrMixed(selections)}
+              </span>
+            </div>
           </div>
-        </div>
+        ) : (
+          <div>
+            <div className="text-[10px] font-mono text-slate-500">{selection.id}</div>
+            <div className="font-semibold">
+              <span className="text-brand-400">&lt;{selection.tag}&gt;</span>
+              <span className="text-[10px] text-slate-500 ml-1.5 uppercase tracking-wide">{selection.kind}</span>
+            </div>
+          </div>
+        )}
         <button onClick={onClose} className="text-slate-500 hover:text-slate-200" aria-label="Close inspector">
           <X size={16} />
         </button>
       </header>
 
       <div className="flex-1 overflow-y-auto">
-        {/* CONTENT */}
+        {multi && (
+          <div className="px-4 py-2 border-b border-slate-800/70 bg-purple-500/5 text-[11px] text-purple-300/80">
+            Bulk edit — Typography / Layout / Appearance apply to all {selections.length} elements.
+            Content / link / image edits are disabled.
+          </div>
+        )}
+
+        {/* CONTENT — only meaningful for single-select */}
+        {!multi && (
         <Section icon={<TextT size={14} />} label="Content" open={open.content} onToggle={() => toggle("content")}>
           {selection.kind === "text" && (
             <ApplyField
@@ -173,6 +230,7 @@ export default function EditInspector({ selection, onApply, onClose, saveState }
             <p className="text-xs text-slate-500 italic">Container element — edit its children, or use Advanced HTML below.</p>
           )}
         </Section>
+        )}
 
         {/* TYPOGRAPHY */}
         <Section icon={<TextT size={14} />} label="Typography" open={open.type} onToggle={() => toggle("type")}>
@@ -340,35 +398,45 @@ export default function EditInspector({ selection, onApply, onClose, saveState }
           </Row>
         </Section>
 
-        {/* ADVANCED */}
-        <Section icon={<Code size={14} />} label="Advanced" open={open.advanced} onToggle={() => toggle("advanced")}>
-          <Row>
-            <Label>Raw style</Label>
-            <textarea
-              value={rawStyle}
-              onChange={(e) => setRawStyle(e.target.value)}
-              rows={3}
-              className={`${inputCls} font-mono text-[11px]`}
-              placeholder="key: value; key: value;"
-            />
-          </Row>
-          <button
-            onClick={() => {
-              const parsed = parseStyle(rawStyle);
-              // also blank out anything we removed
-              const next = { ...Object.fromEntries(Object.keys(styles).map((k) => [k, ""])), ...parsed };
-              onApply({ kind: "set-style", id: selection.id, styles: next });
-            }}
-            className="w-full mt-1 px-3 py-1.5 bg-slate-800 hover:bg-slate-700 text-xs font-semibold rounded transition-colors text-slate-200"
-          >
-            Apply raw style
-          </button>
-        </Section>
+        {/* ADVANCED — disabled in multi-mode (raw style needs a single id) */}
+        {!multi && (
+          <Section icon={<Code size={14} />} label="Advanced" open={open.advanced} onToggle={() => toggle("advanced")}>
+            <Row>
+              <Label>Raw style</Label>
+              <textarea
+                value={rawStyle}
+                onChange={(e) => setRawStyle(e.target.value)}
+                rows={3}
+                className={`${inputCls} font-mono text-[11px]`}
+                placeholder="key: value; key: value;"
+              />
+            </Row>
+            <button
+              onClick={() => {
+                const parsed = parseStyle(rawStyle);
+                // also blank out anything we removed
+                const next = { ...Object.fromEntries(Object.keys(styles).map((k) => [k, ""])), ...parsed };
+                onApply({ kind: "set-style", id: selection.id, styles: next });
+              }}
+              className="w-full mt-1 px-3 py-1.5 bg-slate-800 hover:bg-slate-700 text-xs font-semibold rounded transition-colors text-slate-200"
+            >
+              Apply raw style
+            </button>
+          </Section>
+        )}
       </div>
 
       <SaveBadge saveState={saveState} />
     </aside>
   );
+}
+
+/* ------------------------------- helpers --------------------------------- */
+
+function sharedTagOrMixed(items) {
+  if (!items || items.length === 0) return "";
+  const first = items[0].tag;
+  return items.every((i) => i.tag === first) ? `all <${first}>` : "mixed tags";
 }
 
 /* ------------------------------- subcomponents --------------------------- */
