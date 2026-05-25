@@ -34,23 +34,40 @@ export default function ChatSidebar({
   return (
     <aside className="w-[420px] flex flex-col border-r border-slate-800 bg-slate-950 relative z-10 shadow-2xl">
       {editMode && (
-        <div className="border-b border-brand-500/30 bg-brand-500/10 px-4 py-2 flex items-center gap-2 text-xs text-brand-200">
-          <PencilSimple size={12} weight="fill" />
-          <span className="font-semibold">Edit mode</span>
-          {editSelections && editSelections.length > 1 ? (
-            <span className="flex items-center gap-1 text-purple-300 font-mono truncate">
-              <Cursor size={10} />
-              {editSelections.length} elements selected
+        <div className="border-b-2 border-brand-500/60 bg-gradient-to-r from-brand-500/20 via-brand-500/10 to-purple-500/10 px-4 py-3">
+          <div className="flex items-center gap-2 text-sm text-white font-semibold">
+            <span className="inline-flex items-center justify-center w-5 h-5 rounded bg-brand-500 shadow-lg shadow-brand-500/40">
+              <PencilSimple size={11} weight="fill" className="text-white" />
             </span>
-          ) : editSelection ? (
-            <span className="flex items-center gap-1 text-brand-300/80 font-mono truncate">
-              <Cursor size={10} />
-              &lt;{editSelection.tag}&gt;{" "}
-              <span className="text-brand-300/50">{editSelection.id}</span>
+            <span>Tweak mode</span>
+            <span className="text-[10px] font-mono uppercase tracking-wider text-brand-300/80 ml-auto px-1.5 py-0.5 bg-brand-500/20 rounded">
+              no rebuild
             </span>
-          ) : (
-            <span className="text-brand-300/60">— click (shift-click for multi) an element to select</span>
-          )}
+          </div>
+          <div className="mt-1.5 text-[11px] text-brand-200/80 leading-snug">
+            Chat here adjusts what you see. The agent can only{" "}
+            <span className="font-mono text-brand-300">patch</span> /{" "}
+            <span className="font-mono text-brand-300">find</span> /{" "}
+            <span className="font-mono text-brand-300">insert blocks</span> — it
+            will not rerun the PM → Designer → Developer pipeline.
+          </div>
+          <div className="mt-2 flex items-center gap-1.5 text-[11px] font-mono">
+            <Cursor size={11} className="text-brand-300/70" />
+            {editSelections && editSelections.length > 1 ? (
+              <span className="text-purple-300 font-semibold">
+                {editSelections.length} elements selected
+              </span>
+            ) : editSelection ? (
+              <>
+                <span className="text-brand-200">&lt;{editSelection.tag}&gt;</span>
+                <span className="text-brand-300/50 truncate">{editSelection.id}</span>
+              </>
+            ) : (
+              <span className="text-brand-300/50">
+                click an element (shift-click for multi-select)
+              </span>
+            )}
+          </div>
         </div>
       )}
       <div ref={scrollRef} className="flex-1 overflow-y-auto p-4 space-y-6">
