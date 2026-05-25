@@ -16,16 +16,18 @@ import { API_BASE } from "./client";
 //   { type: "error", message }
 export function streamChat(projectId, slug, message, opts = {}) {
   const controller = new AbortController();
-  const { onEvent, onError, model = "" } = opts;
+  const { onEvent, onError, model = "", editContext = null } = opts;
 
   (async () => {
     try {
+      const body = { message, model };
+      if (editContext) body.edit_context = editContext;
       const res = await fetch(
         `${API_BASE}/api/projects/${projectId}/pages/${slug}/chat/stream`,
         {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ message, model }),
+          body: JSON.stringify(body),
           signal: controller.signal,
         }
       );

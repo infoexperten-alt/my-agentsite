@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import json
 import logging
-from typing import Any
+from typing import Any, Literal
 
 from prompture import RunContext, ToolRegistry
 
@@ -223,7 +223,87 @@ async def get_build_status(ctx: RunContext, page_slug: str = "home") -> str:
 
 
 # ---------------------------------------------------------------------------
-# Registry — used by the chat endpoint
+# Edit-mode tools — used when the user has the visual editor open with an
+# element selected. The agent's only job here is to emit Patch tool-calls;
+# the frontend intercepts `tool_use_stop` events and applies them via
+# htmlstudio's `applyPatch`. Persistence to disk happens through the same
+# `useVisualEdit` round-trip the inspector uses, so agent edits and human
+# edits share one rail.
+# ---------------------------------------------------------------------------
+
+
+async def patch(
+    ctx: RunContext,
+    kind: Literal[
+        "set-text", "set-link", "set-image", "set-style", "set-attributes", "set-outer-html"
+    ],
+    id: str,
+    value: str | None = None,
+    href: str | None = None,
+    text: str | None = None,
+    src: str | None = None,
+    alt: str | None = None,
+    styles: dict[str, str] | None = None,
+    attributes: dict[str, str | None] | None = None,
+    html: str | None = None,
+) -> str:
+    """Apply a visual edit to an element in the current page.
+
+    Use this in edit mode to tweak what the user has selected. One call
+    per logical change. The frontend applies the patch through htmlstudio
+    and persists it — you do NOT need to call any other tool.
+
+    Args:
+        kind: Which kind of edit. Pick exactly one:
+            - ``"set-text"`` — replace the text of a leaf element. Use ``value``.
+            - ``"set-link"`` — update an ``<a>``'s href and label. Use ``href`` + ``text``.
+            - ``"set-image"`` — update an ``<img>``'s src and alt. Use ``src`` + ``alt``.
+            - ``"set-style"`` — merge inline styles. Use ``styles`` (e.g.
+              ``{"color": "#2563eb", "font-size": "20px"}``). Empty string
+              value removes a property.
+            - ``"set-attributes"`` — set or remove HTML attributes. Use
+              ``attributes`` (e.g. ``{"target": "_blank", "class": null}``;
+              null removes).
+            - ``"set-outer-html"`` — replace the element's entire markup.
+              Use ``html``. The selected id is preserved on the replacement.
+        id: The ``data-ve-id`` of the target element. ALWAYS use the
+            ``id`` field from the [Edit mode — selected: ...] header in
+            the user's message. Never invent ids.
+        value: Plain text for ``set-text``. HTML-escaped automatically.
+        href: New URL for ``set-link``.
+        text: New label text for ``set-link``.
+        src: New image URL for ``set-image``.
+        alt: New alt text for ``set-image``.
+        styles: CSS property→value map for ``set-style``. Use kebab-case
+            (``"font-size"`` not ``fontSize``). Set a value to ``""`` to
+            remove that property.
+        attributes: HTML attribute map for ``set-attributes``. ``null``
+            removes the attribute.
+        html: Full replacement markup for ``set-outer-html``.
+
+    Returns:
+        A JSON blob with the patch payload. The frontend applies it
+        immediately and persists to disk; the user sees the change without
+        any further action from you.
+    """
+    payload: dict[str, Any] = {"kind": kind, "id": id}
+    for k, v in (
+        ("value", value),
+        ("href", href),
+        ("text", text),
+        ("src", src),
+        ("alt", alt),
+        ("styles", styles),
+        ("attributes", attributes),
+        ("html", html),
+    ):
+        if v is not None:
+            payload[k] = v
+    return json.dumps({"queued": True, "patch": payload})
+
+
+# ---------------------------------------------------------------------------
+# Registries — used by the chat endpoint
 # ---------------------------------------------------------------------------
 
 chat_registry = ToolRegistry()
@@ -233,3 +313,10 @@ chat_registry.register(list_pages)
 chat_registry.register(list_versions)
 chat_registry.register(read_page_file)
 chat_registry.register(get_build_status)
+
+# Edit mode: agent can only patch the selected element (and read source for
+# context). start_build / steer_build are deliberately excluded — rebuilding
+# the page is the opposite of what an edit-mode user wants.
+edit_registry = ToolRegistry()
+edit_registry.register(patch)
+edit_registry.register(read_page_file)

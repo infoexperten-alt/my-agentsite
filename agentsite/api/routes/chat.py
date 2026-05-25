@@ -31,7 +31,7 @@ from prompture import (
 )
 from pydantic import BaseModel
 
-from ...agents.chat_tools import chat_registry
+from ...agents.chat_tools import chat_registry, edit_registry
 from ...models import ChatMessage
 from ..deps import (
     get_agent_config_repo,
@@ -79,9 +79,44 @@ DEFAULT_SYSTEM_PROMPT = (
 )
 
 
+EDIT_MODE_SYSTEM_PROMPT = (
+    "You are AgentSite's visual edit assistant. The user has the visual "
+    "editor open and is asking you to TWEAK what they have selected — "
+    "not rebuild the page.\n\n"
+    "Use the `patch` tool to apply changes. One call per logical change. "
+    "Examples:\n"
+    "  - 'make it blue and bigger' → patch(kind='set-style', id=<selected.id>, "
+    "styles={'color': '#2563eb', 'font-size': '20px'})\n"
+    "  - 'change the text to Get Started' → patch(kind='set-text', "
+    "id=<selected.id>, value='Get Started')\n"
+    "  - 'make the button rounded' → patch(kind='set-style', id=<selected.id>, "
+    "styles={'border-radius': '9999px'})\n"
+    "  - 'open this link in a new tab' → patch(kind='set-attributes', "
+    "id=<selected.id>, attributes={'target': '_blank', 'rel': 'noopener'})\n\n"
+    "ALWAYS pull the target id from the [Edit mode — selected: ...] "
+    "header in the user's message. Never invent ids.\n\n"
+    "If the user asks for something that needs new markup (e.g. 'add an "
+    "icon next to the text'), use set-outer-html with the current element "
+    "wrapped/extended.\n\n"
+    "If nothing is selected, ASK the user to click the element they want "
+    "to change — do not guess.\n\n"
+    "NEVER call start_build — the user is not asking for a rebuild. If "
+    "they want a full redesign, tell them to exit edit mode first.\n"
+    "NEVER narrate what you are about to do — just call the tool. After "
+    "patching, one short sentence confirming what changed is fine."
+)
+
+
+class EditContext(BaseModel):
+    mode: bool = False
+    version: int | None = None
+    selection: dict[str, Any] | None = None
+
+
 class ChatRequest(BaseModel):
     message: str
     model: str = ""
+    edit_context: EditContext | None = None
 
 
 def _sse(payload: dict[str, Any]) -> str:
@@ -147,14 +182,49 @@ async def chat_stream(
         "provider_keys": dict(project.provider_keys or {}),
     }
 
-    framed_prompt = (
-        f"[Project: {project_id} | Current page: {slug}]\n\n{message}"
-    )
+    edit_ctx = req.edit_context
+    in_edit_mode = bool(edit_ctx and edit_ctx.mode)
+
+    if in_edit_mode:
+        header_parts = [f"[Project: {project_id} | Current page: {slug} | Edit mode]"]
+        sel = edit_ctx.selection if edit_ctx else None
+        if sel:
+            header_parts.append(
+                f"[Selected: <{sel.get('tag', '?')}> "
+                f"id={sel.get('id', '?')} "
+                f"kind={sel.get('kind', '?')}]"
+            )
+            sel_text = sel.get("text")
+            if sel_text:
+                header_parts.append(f"Current text: {sel_text!r}")
+            sel_attrs = (sel.get("attributes") or {})
+            sel_style = sel_attrs.get("style")
+            if sel_style:
+                header_parts.append(f"Current inline style: {sel_style}")
+            sel_href = sel_attrs.get("href")
+            if sel_href:
+                header_parts.append(f"Current href: {sel_href}")
+            sel_src = sel_attrs.get("src")
+            if sel_src:
+                header_parts.append(f"Current image src: {sel_src}")
+        else:
+            header_parts.append("[Selected: none — ask the user to click an element]")
+        if edit_ctx and edit_ctx.version is not None:
+            header_parts.append(f"[Editing version: v{edit_ctx.version}]")
+        framed_prompt = "\n".join(header_parts) + f"\n\n{message}"
+        active_registry = edit_registry
+        active_system_prompt = EDIT_MODE_SYSTEM_PROMPT
+    else:
+        framed_prompt = (
+            f"[Project: {project_id} | Current page: {slug}]\n\n{message}"
+        )
+        active_registry = chat_registry
+        active_system_prompt = DEFAULT_SYSTEM_PROMPT
 
     agent = AsyncAgent(
         model=model,
-        tools=chat_registry,
-        system_prompt=DEFAULT_SYSTEM_PROMPT,
+        tools=active_registry,
+        system_prompt=active_system_prompt,
         max_iterations=5,
     )
 

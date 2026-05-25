@@ -160,8 +160,18 @@ export default function PageBuilderPage() {
       { role: "agent", content: "", _liveId: liveId },
     ]);
 
+    const editContext =
+      editMode && viewMode === "preview"
+        ? {
+            mode: true,
+            version: activeVersion,
+            selection: visualEdit.selection || null,
+          }
+        : null;
+
     let agentText = "";
     streamChat(projectId, slug, text, {
+      editContext,
       onEvent: (event) => {
         if (event.type === "text") {
           agentText += event.content;
@@ -171,6 +181,12 @@ export default function PageBuilderPage() {
         } else if (event.type === "tool_call" && event.name === "start_build") {
           // Agent is about to fire the pipeline — open the WS so progress events arrive.
           gen.prepareBuildStream();
+        } else if (event.type === "tool_use_stop" && event.name === "patch") {
+          // Edit-mode agent emitted a Patch. Route it through the same
+          // hook the inspector uses — same apply→srcDoc→PUT pipeline.
+          if (event.input && typeof event.input === "object") {
+            visualEdit.applyPatch(event.input);
+          }
         } else if (event.type === "done") {
           setMessages((prev) =>
             prev.map((m) => (m._liveId === liveId ? { role: "agent", content: agentText } : m))
@@ -354,6 +370,8 @@ export default function PageBuilderPage() {
           messages={messages}
           onSend={handleSend}
           generating={gen.generating}
+          editMode={editMode && viewMode === "preview"}
+          editSelection={visualEdit.selection}
           discoveryForm={
             pendingBrief ? (
               <DiscoveryForm

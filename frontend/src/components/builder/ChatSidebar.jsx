@@ -1,7 +1,7 @@
 import { useRef, useEffect } from "react";
 import ChatMessage from "./ChatMessage";
 import ChatInput from "./ChatInput";
-import { Sparkle } from "@phosphor-icons/react";
+import { Sparkle, PencilSimple, Cursor } from "@phosphor-icons/react";
 
 export default function ChatSidebar({
   messages,
@@ -10,6 +10,8 @@ export default function ChatSidebar({
   generating,
   discoveryForm = null,
   todoStream = null,
+  editMode = false,
+  editSelection = null,
 }) {
   const scrollRef = useRef(null);
   const formRef = useRef(null);
@@ -30,6 +32,21 @@ export default function ChatSidebar({
 
   return (
     <aside className="w-[420px] flex flex-col border-r border-slate-800 bg-slate-950 relative z-10 shadow-2xl">
+      {editMode && (
+        <div className="border-b border-brand-500/30 bg-brand-500/10 px-4 py-2 flex items-center gap-2 text-xs text-brand-200">
+          <PencilSimple size={12} weight="fill" />
+          <span className="font-semibold">Edit mode</span>
+          {editSelection ? (
+            <span className="flex items-center gap-1 text-brand-300/80 font-mono truncate">
+              <Cursor size={10} />
+              &lt;{editSelection.tag}&gt;{" "}
+              <span className="text-brand-300/50">{editSelection.id}</span>
+            </span>
+          ) : (
+            <span className="text-brand-300/60">— click an element to select</span>
+          )}
+        </div>
+      )}
       <div ref={scrollRef} className="flex-1 overflow-y-auto p-4 space-y-6">
         {messages.length === 0 && !generating && !discoveryForm && (
           <div className="flex flex-col items-center justify-center h-full text-center">
