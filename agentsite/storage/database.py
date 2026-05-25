@@ -106,6 +106,25 @@ CREATE TABLE IF NOT EXISTS agent_runs (
     strategy TEXT DEFAULT '',
     model TEXT DEFAULT ''
 );
+
+CREATE TABLE IF NOT EXISTS project_components (
+    id TEXT PRIMARY KEY,
+    project_id TEXT NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+    slug TEXT NOT NULL,
+    name TEXT NOT NULL,
+    category TEXT NOT NULL DEFAULT 'custom',
+    description TEXT NOT NULL DEFAULT '',
+    thumbnail TEXT NOT NULL DEFAULT '🧱',
+    template TEXT NOT NULL,
+    fields_json TEXT NOT NULL DEFAULT '[]',
+    source_instance_id TEXT,
+    source_page_slug TEXT,
+    source_version INTEGER,
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL,
+    UNIQUE (project_id, slug)
+);
+CREATE INDEX IF NOT EXISTS idx_project_components_project ON project_components(project_id);
 """
 
 # Migration: drop old tables if they exist with old schema

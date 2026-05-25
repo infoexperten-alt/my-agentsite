@@ -421,6 +421,48 @@ class ChatMessage(BaseModel):
 
 
 # ------------------------------------------------------------------
+# Project components (htmlstudio Phase 4 — user-saved reusable blocks)
+# ------------------------------------------------------------------
+
+
+class BlockFieldModel(BaseModel):
+    """One editable surface on a BlockDefinition. Mirror of htmlstudio's BlockField."""
+
+    key: str
+    type: str = "text"  # text/textarea/url/image/color/select/number/boolean
+    label: str = ""
+    help: str = ""
+    default: str | int | float | bool | None = None
+    options: list[dict] = Field(default_factory=list)  # for type=select
+    optional: bool = False
+
+
+class ProjectComponent(BaseModel):
+    """A reusable block definition saved to a specific project.
+
+    Compatible shape with htmlstudio's `BlockDefinition` so the same
+    palette / config form / render path works for builtins and project
+    components alike.
+    """
+
+    id: str = Field(default_factory=lambda: "pc_" + uuid.uuid4().hex[:10])
+    project_id: str
+    slug: str
+    name: str
+    category: str = "custom"
+    description: str = ""
+    thumbnail: str = "🧱"
+    template: str  # HTML with {{key}} placeholders
+    fields: list[BlockFieldModel] = Field(default_factory=list)
+    # Audit trail — where this component was extracted from
+    source_instance_id: str | None = None
+    source_page_slug: str | None = None
+    source_version: int | None = None
+    created_at: str = Field(default_factory=lambda: datetime.now(timezone.utc).isoformat())
+    updated_at: str = Field(default_factory=lambda: datetime.now(timezone.utc).isoformat())
+
+
+# ------------------------------------------------------------------
 # WebSocket event model
 # ------------------------------------------------------------------
 

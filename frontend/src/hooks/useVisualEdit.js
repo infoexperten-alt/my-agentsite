@@ -157,6 +157,25 @@ export default function useVisualEdit({ projectId, slug, version, enabled }) {
     [buildSrcDoc, scheduleSave],
   );
 
+  // Pull the outer HTML for a given data-ve-id directly from the tagged
+  // source. Used by the "Save as component" flow — we need the actual
+  // markup, not just the selection's metadata.
+  const getOuterHtml = useCallback(
+    (id) => {
+      if (!taggedSource || !id) return null;
+      // DOMParser is the simplest, browser-native option here — the
+      // tagged source is well-formed HTML.
+      try {
+        const doc = new DOMParser().parseFromString(taggedSource, "text/html");
+        const el = doc.querySelector(`[data-ve-id="${CSS.escape(id)}"]`);
+        return el ? el.outerHTML : null;
+      } catch {
+        return null;
+      }
+    },
+    [taggedSource],
+  );
+
   // Clear all selection state and tell the iframe to drop its outlines.
   const clearSelection = useCallback(() => {
     setSelection(null);
@@ -178,6 +197,7 @@ export default function useVisualEdit({ projectId, slug, version, enabled }) {
     clearSelection,
     applyPatch: applyAndPersist,
     applyPatches: applyManyAndPersist,
+    getOuterHtml,     // for "Save as component" — pulls raw markup by id
     ready,
     saveState,
     previewFrameRef,  // attach to the iframe so the hook can post commands

@@ -6,7 +6,7 @@ import json
 from datetime import datetime, timezone
 from typing import Any
 
-from ..models import AgentConfig, AgentRun, ChatMessage, MemoryFact, Page, PageVersion, Project, StyleSpec
+from ..models import AgentConfig, AgentRun, BlockFieldModel, ChatMessage, MemoryFact, Page, PageVersion, Project, ProjectComponent, StyleSpec
 from .database import Database
 
 
@@ -774,3 +774,114 @@ class DesignSystemRepository:
             "source": row["source"],
             "created_at": row["created_at"],
         }
+
+
+class ProjectComponentRepository:
+    """Phase 4 — project-scoped reusable block definitions.
+
+    A ProjectComponent is shape-compatible with htmlstudio's
+    BlockDefinition (same fields), so the same palette / config form /
+    render pipeline works for builtins and project components alike.
+    """
+
+    def __init__(self, db: Database) -> None:
+        self._db = db
+
+    async def create(self, component: ProjectComponent) -> ProjectComponent:
+        await self._db.conn.execute(
+            """INSERT INTO project_components
+               (id, project_id, slug, name, category, description, thumbnail,
+                template, fields_json,
+                source_instance_id, source_page_slug, source_version,
+                created_at, updated_at)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+            (
+                component.id,
+                component.project_id,
+                component.slug,
+                component.name,
+                component.category,
+                component.description,
+                component.thumbnail,
+                component.template,
+                json.dumps([f.model_dump() for f in component.fields]),
+                component.source_instance_id,
+                component.source_page_slug,
+                component.source_version,
+                component.created_at,
+                component.updated_at,
+            ),
+        )
+        await self._db.conn.commit()
+        return component
+
+    async def list_by_project(self, project_id: str) -> list[ProjectComponent]:
+        cursor = await self._db.conn.execute(
+            "SELECT * FROM project_components WHERE project_id=? ORDER BY created_at DESC",
+            (project_id,),
+        )
+        rows = await cursor.fetchall()
+        return [self._row_to_component(r) for r in rows]
+
+    async def get(self, component_id: str) -> ProjectComponent | None:
+        cursor = await self._db.conn.execute(
+            "SELECT * FROM project_components WHERE id=?", (component_id,)
+        )
+        row = await cursor.fetchone()
+        return self._row_to_component(row) if row else None
+
+    async def get_by_slug(self, project_id: str, slug: str) -> ProjectComponent | None:
+        cursor = await self._db.conn.execute(
+            "SELECT * FROM project_components WHERE project_id=? AND slug=?",
+            (project_id, slug),
+        )
+        row = await cursor.fetchone()
+        return self._row_to_component(row) if row else None
+
+    async def update(self, component: ProjectComponent) -> None:
+        component.updated_at = datetime.now(timezone.utc).isoformat()
+        await self._db.conn.execute(
+            """UPDATE project_components
+               SET slug=?, name=?, category=?, description=?, thumbnail=?,
+                   template=?, fields_json=?, updated_at=?
+               WHERE id=?""",
+            (
+                component.slug,
+                component.name,
+                component.category,
+                component.description,
+                component.thumbnail,
+                component.template,
+                json.dumps([f.model_dump() for f in component.fields]),
+                component.updated_at,
+                component.id,
+            ),
+        )
+        await self._db.conn.commit()
+
+    async def delete(self, component_id: str) -> bool:
+        cursor = await self._db.conn.execute(
+            "DELETE FROM project_components WHERE id=?", (component_id,)
+        )
+        await self._db.conn.commit()
+        return cursor.rowcount > 0
+
+    @staticmethod
+    def _row_to_component(row: Any) -> ProjectComponent:
+        fields_data = json.loads(row["fields_json"] or "[]")
+        return ProjectComponent(
+            id=row["id"],
+            project_id=row["project_id"],
+            slug=row["slug"],
+            name=row["name"],
+            category=row["category"],
+            description=row["description"],
+            thumbnail=row["thumbnail"],
+            template=row["template"],
+            fields=[BlockFieldModel(**f) for f in fields_data],
+            source_instance_id=row["source_instance_id"],
+            source_page_slug=row["source_page_slug"],
+            source_version=row["source_version"],
+            created_at=row["created_at"],
+            updated_at=row["updated_at"],
+        )

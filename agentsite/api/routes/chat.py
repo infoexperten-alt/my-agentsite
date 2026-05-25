@@ -39,6 +39,7 @@ from ..deps import (
     get_message_repo,
     get_page_repo,
     get_pm,
+    get_project_component_repo,
     get_repo,
     get_version_repo,
 )
@@ -89,8 +90,10 @@ EDIT_MODE_SYSTEM_PROMPT = (
     "  • get_tree(id, depth=2) — structural tree of an element's descendants\n"
     "  • find_closest(from_id, selector) — walk up to the nearest matching ancestor\n"
     "  • get_parent(id) / get_children(id) — immediate relatives\n"
-    "  • list_blocks — discover reusable blocks (hero / CTA / feature grid / quote)\n"
-    "  • render_block(block_id, config) — render a block to HTML, then patch it in\n"
+    "  • list_blocks — discover BUILT-IN reusable blocks (hero / CTA / feature grid / quote)\n"
+    "  • list_project_components — discover this project's CUSTOM saved components\n"
+    "  • render_block(id_or_slug, config) — render a builtin OR project component to HTML\n"
+    "  • extract_component(target_id, name, slug) — save a section as a reusable project component\n"
     "  • read_page_file — read raw file contents\n\n"
     "Use the `patch` tool to apply changes. One call per logical change. "
     "Examples:\n"
@@ -114,13 +117,19 @@ EDIT_MODE_SYSTEM_PROMPT = (
     "`find_closest` or `get_parent` to resolve before patching.\n\n"
     "INSERTING BLOCKS — when the user asks for a new section (hero, CTA "
     "banner, feature grid, testimonial, pricing table…) PREFER inserting "
-    "a pre-built block over writing markup from scratch. Flow:\n"
-    "  1. list_blocks → see what's available\n"
-    "  2. render_block(block_id, {field: value, …}) → get HTML\n"
-    "  3. patch(kind='set-outer-html', id=<target>, html=<rendered>) — "
-    "where <target> is the element the new block should REPLACE; or wrap "
-    "the existing element + new block via set-outer-html if you're "
-    "adding rather than replacing.\n\n"
+    "a reusable block. Check BOTH catalogs:\n"
+    "  1. list_project_components → custom blocks saved in this project\n"
+    "  2. list_blocks → built-in catalog\n"
+    "  3. render_block(id_or_slug, {field: value, …}) → get HTML (works for either)\n"
+    "  4. patch(kind='set-outer-html', id=<target>, html=<rendered>) — "
+    "where <target> is the element the new block should REPLACE.\n\n"
+    "EXTRACTING COMPONENTS — when the user says 'save this as a component' "
+    "or 'make this reusable' with an element selected, call "
+    "extract_component(selected.id, name, slug). ALSO propose extraction "
+    "when you spot 3+ near-identical sections in get_tree output — but "
+    "ASK first: 'I see three near-identical pricing cards. Want me to save "
+    "the pattern as a `pricing-card` component? We could then tweak all "
+    "three by editing one definition.'\n\n"
     "If the user asks for something that needs new markup but no block "
     "fits (e.g. 'add an icon next to the text'), use set-outer-html "
     "with the current element wrapped/extended.\n\n"
@@ -162,6 +171,7 @@ async def chat_stream(
     agent_config_repo=Depends(get_agent_config_repo),
     agent_run_repo=Depends(get_agent_run_repo),
     message_repo=Depends(get_message_repo),
+    project_component_repo=Depends(get_project_component_repo),
     pm=Depends(get_pm),
 ):
     """Stream chat-agent events as SSE frames."""
@@ -208,6 +218,7 @@ async def chat_stream(
         "pm": pm,
         "model": model,
         "provider_keys": dict(project.provider_keys or {}),
+        "project_component_repo": project_component_repo,
     }
 
     edit_ctx = req.edit_context

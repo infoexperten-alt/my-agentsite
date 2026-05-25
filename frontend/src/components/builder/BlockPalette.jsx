@@ -14,11 +14,21 @@ import { listBlocks } from "../../api/blocks";
  *   - selectionLabel?: string — shown in the footer so the user knows
  *     WHERE the block will land (e.g. "replaces <section> p-0-1")
  */
-export default function BlockPalette({ open, onClose, onInsert, selectionLabel }) {
+export default function BlockPalette({
+  open,
+  onClose,
+  onInsert,
+  selectionLabel,
+  projectComponents = [],
+}) {
   const [query, setQuery] = useState("");
   const [category, setCategory] = useState("all");
+  const [tab, setTab] = useState("builtin"); // "builtin" | "project"
 
-  const blocks = listBlocks();
+  const builtins = listBlocks();
+  // Project components arrive shaped like BlockDefinition (server returns
+  // the model_dump), so they slot into the same grid logic.
+  const blocks = tab === "project" ? projectComponents : builtins;
   const categories = useMemo(
     () => ["all", ...Array.from(new Set(blocks.map((b) => b.category)))],
     [blocks],
@@ -60,6 +70,20 @@ export default function BlockPalette({ open, onClose, onInsert, selectionLabel }
           </button>
         </header>
 
+        {/* Library tabs */}
+        <div className="px-5 pt-3 flex gap-1 border-b border-slate-800/70">
+          <TabButton active={tab === "builtin"} onClick={() => { setTab("builtin"); setCategory("all"); }}>
+            Built-in <span className="text-[10px] text-slate-500 ml-1">({builtins.length})</span>
+          </TabButton>
+          <TabButton
+            active={tab === "project"}
+            onClick={() => { setTab("project"); setCategory("all"); }}
+            badge={projectComponents.length > 0}
+          >
+            This project <span className="text-[10px] text-slate-500 ml-1">({projectComponents.length})</span>
+          </TabButton>
+        </div>
+
         {/* Filter row */}
         <div className="px-5 py-3 border-b border-slate-800 flex items-center gap-3">
           <div className="relative flex-1">
@@ -90,7 +114,15 @@ export default function BlockPalette({ open, onClose, onInsert, selectionLabel }
 
         {/* Grid */}
         <div className="flex-1 overflow-y-auto p-5">
-          {filtered.length === 0 ? (
+          {tab === "project" && projectComponents.length === 0 ? (
+            <div className="text-center text-sm text-slate-500 py-12">
+              <div className="text-3xl mb-3">🧱</div>
+              No saved components yet.
+              <div className="mt-1 text-[11px] text-slate-600">
+                Select a section in the editor → "Save as component" to start the library.
+              </div>
+            </div>
+          ) : filtered.length === 0 ? (
             <div className="text-center text-sm text-slate-500 py-12">
               No blocks match "{query}".
             </div>
@@ -135,5 +167,23 @@ export default function BlockPalette({ open, onClose, onInsert, selectionLabel }
         </footer>
       </div>
     </div>
+  );
+}
+
+function TabButton({ active, onClick, children, badge }) {
+  return (
+    <button
+      onClick={onClick}
+      className={`relative px-3 py-2 text-xs font-semibold border-b-2 transition-colors ${
+        active
+          ? "border-brand-500 text-white"
+          : "border-transparent text-slate-400 hover:text-slate-200"
+      }`}
+    >
+      {children}
+      {badge && !active && (
+        <span className="absolute -top-0.5 -right-0.5 w-1.5 h-1.5 bg-brand-500 rounded-full" />
+      )}
+    </button>
   );
 }

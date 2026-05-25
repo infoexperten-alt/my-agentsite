@@ -12,6 +12,7 @@ from ..storage.repository import (
     MemoryRepository,
     MessageRepository,
     PageRepository,
+    ProjectComponentRepository,
     ProjectRepository,
     VersionRepository,
 )
@@ -28,6 +29,7 @@ agent_run_repo: AgentRunRepository | None = None
 message_repo: MessageRepository | None = None
 memory_repo: MemoryRepository | None = None
 design_system_repo: DesignSystemRepository | None = None
+project_component_repo: ProjectComponentRepository | None = None
 
 
 async def get_db() -> Database:
@@ -80,6 +82,12 @@ async def get_design_system_repo() -> DesignSystemRepository:
     if design_system_repo is None:
         raise RuntimeError("Design system repository not initialized")
     return design_system_repo
+
+
+async def get_project_component_repo() -> ProjectComponentRepository:
+    if project_component_repo is None:
+        raise RuntimeError("Project component repository not initialized")
+    return project_component_repo
 
 
 async def get_pm() -> ProjectManager:

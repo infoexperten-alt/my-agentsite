@@ -16,8 +16,10 @@ import CodeView from "../components/builder/CodeView";
 import ZoomControls from "../components/builder/ZoomControls";
 import EditInspector from "../components/builder/EditInspector";
 import BlockPalette from "../components/builder/BlockPalette";
+import SaveComponentModal from "../components/builder/SaveComponentModal";
 import useVisualEdit from "../hooks/useVisualEdit";
 import { render as renderBlock, rerender as rerenderBlock } from "../api/blocks";
+import { listComponents, renderComponent } from "../api/components";
 import { PencilSimple, Plus } from "@phosphor-icons/react";
 
 export default function PageBuilderPage() {
@@ -37,6 +39,19 @@ export default function PageBuilderPage() {
   const [viewMode, setViewMode] = useState("preview");
   const [editMode, setEditMode] = useState(false);
   const [paletteOpen, setPaletteOpen] = useState(false);
+  const [saveComponentOpen, setSaveComponentOpen] = useState(false);
+  const [projectComponents, setProjectComponents] = useState([]);
+
+  // Fetch project component library on mount + when projectId changes.
+  useEffect(() => {
+    if (!projectId) return;
+    listComponents(projectId).then(setProjectComponents).catch(() => setProjectComponents([]));
+  }, [projectId]);
+
+  const refreshComponents = useCallback(() => {
+    if (!projectId) return;
+    listComponents(projectId).then(setProjectComponents).catch(() => {});
+  }, [projectId]);
   const visualEdit = useVisualEdit({
     projectId,
     slug,
@@ -472,11 +487,10 @@ export default function PageBuilderPage() {
             onApply={visualEdit.applyPatch}
             onApplyMany={visualEdit.applyPatches}
             onRerenderBlock={({ blockId, instanceId, targetId, config }) => {
-              // Re-render the block from the new config (preserving instanceId)
-              // and replace the existing instance via set-outer-html.
               const html = rerenderBlock(blockId, config, instanceId);
               visualEdit.applyPatch({ kind: "set-outer-html", id: targetId, html });
             }}
+            onSaveAsComponent={() => setSaveComponentOpen(true)}
             onClose={visualEdit.clearSelection}
             saveState={visualEdit.saveState}
           />
@@ -485,31 +499,50 @@ export default function PageBuilderPage() {
 
       <BlockPalette
         open={paletteOpen}
+        projectComponents={projectComponents}
         selectionLabel={
           visualEdit.selection
             ? `<${visualEdit.selection.tag}> ${visualEdit.selection.id}`
             : null
         }
         onClose={() => setPaletteOpen(false)}
-        onInsert={(def) => {
-          // v0.3 requires a selection — set-outer-html replaces it with
-          // the rendered block. Without a selection there's no anchor to
-          // patch against (the tagger doesn't stamp <body>). We surface
-          // this by showing a friendly warning instead of silently
-          // doing something destructive.
+        onInsert={async (def) => {
           if (!visualEdit.selection) {
             window.alert(
               "Pick an element first — the new block will replace it. Tip: click the section you want to swap, then open the palette.",
             );
             return;
           }
-          const html = renderBlock(def.id, {});
+          // Builtins have `id`; project components have both `id` (pc_…)
+          // and a `slug`. We render via slug when it's a project component
+          // (the server-side render uses the slug as the BlockDefinition id).
+          let html;
+          if (def.id?.startsWith("pc_")) {
+            const r = await renderComponent(projectId, def.id, {});
+            html = r.html;
+          } else {
+            html = renderBlock(def.id, {});
+          }
           visualEdit.applyPatch({
             kind: "set-outer-html",
             id: visualEdit.selection.id,
             html,
           });
           setPaletteOpen(false);
+        }}
+      />
+
+      <SaveComponentModal
+        open={saveComponentOpen}
+        projectId={projectId}
+        selection={visualEdit.selection}
+        getOuterHtml={visualEdit.getOuterHtml}
+        pageSlug={slug}
+        version={activeVersion}
+        onClose={() => setSaveComponentOpen(false)}
+        onSaved={() => {
+          setSaveComponentOpen(false);
+          refreshComponents();
         }}
       />
     </div>

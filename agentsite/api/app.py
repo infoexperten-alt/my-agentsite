@@ -16,7 +16,7 @@ from fastapi.staticfiles import StaticFiles
 
 from ..config import settings
 from . import deps
-from .routes import agents, assets, brand, chat, design_systems, directions, discovery, edit, generate, memory, models, preview, projects, prompt_templates, providers, skills
+from .routes import agents, assets, brand, chat, components, design_systems, directions, discovery, edit, generate, memory, models, preview, projects, prompt_templates, providers, skills
 from .websocket import ws_manager
 
 logger = logging.getLogger("agentsite.api")
@@ -54,6 +54,7 @@ async def lifespan(app: FastAPI):
     deps.message_repo = deps.MessageRepository(deps.db)
     deps.memory_repo = deps.MemoryRepository(deps.db)
     deps.design_system_repo = deps.DesignSystemRepository(deps.db)
+    deps.project_component_repo = deps.ProjectComponentRepository(deps.db)
     # Backfill costs for runs recorded before cost tracking was added
     try:
         updated = await deps.agent_run_repo.backfill_costs()
@@ -122,6 +123,7 @@ def create_app(
     app.include_router(memory.router)
     app.include_router(prompt_templates.router)
     app.include_router(edit.router)
+    app.include_router(components.router)
 
     # Extra routers (e.g. auth, landing page)
     if extra_routers:
