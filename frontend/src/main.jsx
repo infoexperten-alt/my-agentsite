@@ -17,12 +17,14 @@ import ApiKeysPage from "./pages/ApiKeysPage";
 import ModelsPage from "./pages/ModelsPage";
 import SettingsPage from "./pages/SettingsPage";
 import { AppProvider } from "./context/AppContext";
+import { ThemeProvider } from "./context/ThemeContext";
 import "./index.css";
 
 ReactDOM.createRoot(document.getElementById("root")).render(
   <React.StrictMode>
-    <AppProvider>
-      <BrowserRouter>
+    <ThemeProvider>
+      <AppProvider>
+        <BrowserRouter>
         <Routes>
           <Route element={<App />}>
             <Route index element={<DashboardPage />} />
@@ -43,8 +45,9 @@ ReactDOM.createRoot(document.getElementById("root")).render(
             path="project/:projectId/page/:slug"
             element={<PageBuilderPage />}
           />
-        </Routes>
-      </BrowserRouter>
-    </AppProvider>
+          </Routes>
+        </BrowserRouter>
+      </AppProvider>
+    </ThemeProvider>
   </React.StrictMode>
 );

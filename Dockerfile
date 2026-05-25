@@ -14,7 +14,13 @@ COPY agentsite/ agentsite/
 RUN pip install --no-cache-dir .
 
 # Build frontend
-COPY frontend/package.json frontend/package-lock.json* frontend/
+# Vendor + manifests first so `npm install` can resolve the local
+# `file:./vendor/htmlstudio` dep without invalidating cache on every source change.
+COPY frontend/package.json frontend/
+COPY frontend/vendor/ frontend/vendor/
+# Skip the host's package-lock.json — npm has a known optional-deps bug
+# (https://github.com/npm/cli/issues/4828) where a Windows-generated lockfile
+# omits Linux rollup binaries. Regenerating inside the container avoids it.
 RUN cd frontend && npm install
 COPY frontend/ frontend/
 RUN cd frontend && npm run build

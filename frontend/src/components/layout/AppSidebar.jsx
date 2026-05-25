@@ -1,5 +1,6 @@
 import { NavLink } from "react-router-dom";
 import { SquaresFour, Users, ChartLineUp, Key, Gear, Sparkle, Brain, GithubLogo, Robot, ArrowUpRight } from "@phosphor-icons/react";
+import ThemeToggle from "../shared/ThemeToggle";
 
 const navItems = [
   { to: "/", icon: SquaresFour, label: "Projects" },
@@ -87,6 +88,7 @@ export default function AppSidebar() {
             Enjoying AgentSite? You'll love CachiBot — AI-powered multi-agent orchestration taken further.
           </p>
         </a>
+        <ThemeToggle />
         <a
           href="https://github.com/jhd3197/AgentSite"
           target="_blank"

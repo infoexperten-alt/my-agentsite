@@ -16,6 +16,80 @@
   --color-brand-glow: rgba(99, 102, 241, 0.15);
 }
 
+/* Light theme — inverts the slate ramp so existing utilities (bg-slate-900,
+   text-slate-300, etc.) automatically pick up light equivalents. */
+[data-theme="light"] {
+  --color-slate-50: #020617;
+  --color-slate-100: #0f172a;
+  --color-slate-200: #1e293b;
+  --color-slate-300: #334155;
+  --color-slate-400: #475569;
+  --color-slate-500: #64748b;
+  --color-slate-600: #94a3b8;
+  --color-slate-700: #cbd5e1;
+  --color-slate-800: #e2e8f0;
+  --color-slate-850: #eaf0f7;
+  --color-slate-900: #f1f5f9;
+  --color-slate-950: #f8fafc;
+
+  --color-brand-glow: rgba(99, 102, 241, 0.18);
+
+  color-scheme: light;
+}
+
+/* In light mode, text-white is overwhelmingly used as primary text on dark
+   slate backgrounds. Flip it to deep slate so it stays readable on the now
+   light surfaces. Brand button exceptions follow below. */
+[data-theme="light"] .text-white {
+  color: #0f172a;
+}
+[data-theme="light"] .hover\:text-white:hover {
+  color: #0f172a;
+}
+
+/* Solid brand backgrounds and gradient brand surfaces keep white labels. */
+[data-theme="light"] .bg-brand-500 .text-white,
+[data-theme="light"] .bg-brand-600 .text-white,
+[data-theme="light"] .bg-brand-700 .text-white,
+[data-theme="light"] [class*="from-brand-"] .text-white,
+[data-theme="light"] [class*="to-brand-"] .text-white,
+[data-theme="light"] [class*="from-purple-"] .text-white,
+[data-theme="light"] .bg-brand-500.text-white,
+[data-theme="light"] .bg-brand-600.text-white,
+[data-theme="light"] .bg-brand-700.text-white,
+[data-theme="light"] .bg-brand-500.hover\:bg-brand-600.text-white,
+[data-theme="light"] .bg-brand-600.hover\:bg-brand-500.text-white,
+[data-theme="light"] [class*="bg-gradient"][class*="brand"].text-white,
+[data-theme="light"] [class*="bg-gradient"][class*="purple"].text-white {
+  color: #ffffff;
+}
+
+/* Accent CTAs like "Send" use bg-white + text-slate-950 in dark mode (dark
+   text on bright surface). In light mode bg-white is still white but
+   slate-950 inverts to near-white, so force the text back to dark. Same for
+   amber/saturated CTA backgrounds. */
+[data-theme="light"] .bg-white.text-slate-950,
+[data-theme="light"] .bg-white .text-slate-950,
+[data-theme="light"] .bg-amber-400.text-slate-950,
+[data-theme="light"] .bg-amber-400 .text-slate-950,
+[data-theme="light"] [class*="bg-amber-"].text-slate-950,
+[data-theme="light"] [class*="bg-yellow-"].text-slate-950,
+[data-theme="light"] [class*="bg-emerald-"].text-slate-950,
+[data-theme="light"] [class*="bg-green-"].text-slate-950 {
+  color: #0f172a;
+}
+
+/* Page-builder send button hover state: bg-white -> bg-slate-200 would jump
+   from light to dark in light mode. Keep the hover light. */
+[data-theme="light"] .bg-white.hover\:bg-slate-200:hover {
+  background-color: #e2e8f0;
+}
+
+[data-theme="dark"],
+:root:not([data-theme]) {
+  color-scheme: dark;
+}
+
 /* Custom scrollbar */
 ::-webkit-scrollbar {
   width: 6px;
@@ -32,12 +106,24 @@
   background: #475569;
 }
 
+[data-theme="light"] ::-webkit-scrollbar-thumb {
+  background: #cbd5e1;
+}
+[data-theme="light"] ::-webkit-scrollbar-thumb:hover {
+  background: #94a3b8;
+}
+
 /* Glass panel utility */
 .glass-panel {
   background: rgba(15, 23, 42, 0.6);
   backdrop-filter: blur(12px);
   -webkit-backdrop-filter: blur(12px);
   border: 1px solid rgba(255, 255, 255, 0.05);
+}
+
+[data-theme="light"] .glass-panel {
+  background: rgba(248, 250, 252, 0.72);
+  border: 1px solid rgba(15, 23, 42, 0.08);
 }
 
 /* Chat message bubble shapes */

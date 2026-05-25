@@ -220,3 +220,5 @@ prompture_tracking_migration.md
 
 # Local planning + execution prompts (per-developer, not shared)
 .plan/
+*.png
+/.planning

@@ -14,6 +14,9 @@ import DirectionPicker from "../components/builder/DirectionPicker";
 import PreviewFrame from "../components/builder/PreviewFrame";
 import CodeView from "../components/builder/CodeView";
 import ZoomControls from "../components/builder/ZoomControls";
+import EditInspector from "../components/builder/EditInspector";
+import useVisualEdit from "../hooks/useVisualEdit";
+import { PencilSimple } from "@phosphor-icons/react";
 
 export default function PageBuilderPage() {
   const { projectId, slug } = useParams();
@@ -30,6 +33,13 @@ export default function PageBuilderPage() {
   const [activeVersion, setActiveVersion] = useState(null);
   const [refreshKey, setRefreshKey] = useState(0);
   const [viewMode, setViewMode] = useState("preview");
+  const [editMode, setEditMode] = useState(false);
+  const visualEdit = useVisualEdit({
+    projectId,
+    slug,
+    version: activeVersion,
+    enabled: editMode && viewMode === "preview",
+  });
   const [pendingBrief, setPendingBrief] = useState(null); // { text, image } awaiting discovery answers
   const [pendingDirection, setPendingDirection] = useState(null); // { text, image, brief } awaiting direction pick
   const prevGenerating = useRef(false);
@@ -392,14 +402,40 @@ export default function PageBuilderPage() {
                 src={previewUrl}
                 html={gen.livePreview?.[slug]?.html}
                 contentHash={gen.livePreview?.[slug]?.contentHash}
+                editSrcDoc={editMode ? visualEdit.srcDoc : null}
                 width={device}
                 frame={deviceFrame}
               />
             )}
           </div>
 
+          {/* Edit-mode toggle (only meaningful when a version has been generated) */}
+          {viewMode === "preview" && activeVersion && (
+            <button
+              onClick={() => setEditMode((v) => !v)}
+              className={`absolute top-4 right-4 z-20 inline-flex items-center gap-1.5 px-3 py-1.5 rounded text-xs font-semibold transition-colors border ${
+                editMode
+                  ? "bg-brand-500 border-brand-400 text-white"
+                  : "bg-slate-900/80 border-slate-800 text-slate-300 hover:text-white"
+              }`}
+              title={editMode ? "Exit edit mode" : "Visual edit (htmlstudio)"}
+            >
+              <PencilSimple size={12} weight={editMode ? "fill" : "regular"} />
+              {editMode ? "Editing" : "Edit"}
+            </button>
+          )}
+
           <ZoomControls zoom={zoom} onZoomChange={setZoom} />
         </main>
+
+        {editMode && viewMode === "preview" && (
+          <EditInspector
+            selection={visualEdit.selection}
+            onApply={visualEdit.applyPatch}
+            onClose={() => visualEdit.setSelection(null)}
+            saveState={visualEdit.saveState}
+          />
+        )}
       </div>
     </div>
   );
