@@ -118,7 +118,7 @@ export default function EditInspector({
 
   if (!selection && !multi) {
     return (
-      <aside className="w-96 border-l border-slate-800 bg-slate-900 p-5 text-slate-400 text-sm flex flex-col gap-3">
+      <div className="h-full bg-slate-900 p-5 text-slate-400 text-sm flex flex-col gap-3">
         <div className="flex items-center gap-2 text-slate-300 font-semibold">
           <Cursor size={16} /> Edit mode
         </div>
@@ -126,7 +126,7 @@ export default function EditInspector({
           Click an element in the preview to inspect it. Double-click any text to edit it inline.
         </p>
         <SaveBadge saveState={saveState} />
-      </aside>
+      </div>
     );
   }
 
@@ -163,7 +163,7 @@ export default function EditInspector({
   const toggle = (k) => setOpen((o) => ({ ...o, [k]: !o[k] }));
 
   return (
-    <aside className="w-96 border-l border-slate-800 bg-slate-900 text-slate-300 text-sm flex flex-col">
+    <div className="h-full bg-slate-900 text-slate-300 text-sm flex flex-col">
       <header className="flex items-center justify-between px-4 py-3 border-b border-slate-800 sticky top-0 bg-slate-900 z-10">
         {multi ? (
           <div>
@@ -488,7 +488,7 @@ export default function EditInspector({
       </div>
 
       <SaveBadge saveState={saveState} />
-    </aside>
+    </div>
   );
 }
 

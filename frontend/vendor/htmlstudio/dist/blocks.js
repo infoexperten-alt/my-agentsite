@@ -121,6 +121,95 @@ export function createRegistry(defs) {
     };
 }
 /* ----------------------------- starter blocks ------------------------ */
+/* ----------------------------- wireframes ---------------------------- */
+/**
+ * Tiny SVG schematics shown in block palette cards. Each is hand-drawn at
+ * a 160×90 canvas (16:9, fits 2-up grids). Stroke = currentColor so the
+ * palette can theme them. Filled areas use a muted brand tint via
+ * `currentColor` with low opacity.
+ */
+const WF_HERO_SPLIT = `<svg viewBox="0 0 160 90" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
+  <rect x="2" y="2" width="156" height="86" rx="4" fill="none" stroke="currentColor" stroke-width="1" opacity="0.25"/>
+  <rect x="14" y="22" width="50" height="6" rx="1" fill="currentColor" opacity="0.85"/>
+  <rect x="14" y="34" width="56" height="3" rx="1" fill="currentColor" opacity="0.45"/>
+  <rect x="14" y="40" width="40" height="3" rx="1" fill="currentColor" opacity="0.45"/>
+  <rect x="14" y="52" width="26" height="8" rx="2" fill="currentColor" opacity="0.75"/>
+  <rect x="86" y="14" width="60" height="62" rx="3" fill="currentColor" opacity="0.18"/>
+  <circle cx="116" cy="40" r="6" fill="currentColor" opacity="0.4"/>
+  <path d="M86 70 L106 56 L126 64 L146 50 L146 76 L86 76 Z" fill="currentColor" opacity="0.35"/>
+</svg>`;
+const WF_CTA_BANNER = `<svg viewBox="0 0 160 90" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
+  <rect x="2" y="2" width="156" height="86" rx="4" fill="currentColor" opacity="0.85"/>
+  <rect x="40" y="24" width="80" height="7" rx="1" fill="#fff" opacity="0.95"/>
+  <rect x="46" y="38" width="68" height="3" rx="1" fill="#fff" opacity="0.6"/>
+  <rect x="52" y="44" width="56" height="3" rx="1" fill="#fff" opacity="0.6"/>
+  <rect x="60" y="58" width="40" height="10" rx="2" fill="#fff" opacity="0.95"/>
+</svg>`;
+const WF_FEATURE_GRID_3 = `<svg viewBox="0 0 160 90" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
+  <rect x="2" y="2" width="156" height="86" rx="4" fill="none" stroke="currentColor" stroke-width="1" opacity="0.25"/>
+  <rect x="50" y="10" width="60" height="5" rx="1" fill="currentColor" opacity="0.7"/>
+  ${[8, 58, 108].map((x) => `
+    <g transform="translate(${x},26)">
+      <rect width="44" height="54" rx="3" fill="none" stroke="currentColor" stroke-width="1" opacity="0.4"/>
+      <circle cx="22" cy="16" r="6" fill="currentColor" opacity="0.55"/>
+      <rect x="6" y="28" width="32" height="4" rx="1" fill="currentColor" opacity="0.6"/>
+      <rect x="6" y="36" width="32" height="2.5" rx="1" fill="currentColor" opacity="0.35"/>
+      <rect x="6" y="41" width="26" height="2.5" rx="1" fill="currentColor" opacity="0.35"/>
+      <rect x="6" y="46" width="30" height="2.5" rx="1" fill="currentColor" opacity="0.35"/>
+    </g>`).join('')}
+</svg>`;
+const WF_TESTIMONIAL_QUOTE = `<svg viewBox="0 0 160 90" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
+  <rect x="2" y="2" width="156" height="86" rx="4" fill="none" stroke="currentColor" stroke-width="1" opacity="0.25"/>
+  <text x="22" y="34" font-family="Georgia, serif" font-size="24" fill="currentColor" opacity="0.45">“</text>
+  <rect x="36" y="20" width="100" height="3.5" rx="1" fill="currentColor" opacity="0.65"/>
+  <rect x="36" y="28" width="92" height="3.5" rx="1" fill="currentColor" opacity="0.65"/>
+  <rect x="36" y="36" width="70" height="3.5" rx="1" fill="currentColor" opacity="0.65"/>
+  <circle cx="62" cy="64" r="7" fill="currentColor" opacity="0.4"/>
+  <rect x="76" y="60" width="36" height="3.5" rx="1" fill="currentColor" opacity="0.7"/>
+  <rect x="76" y="67" width="48" height="2.5" rx="1" fill="currentColor" opacity="0.4"/>
+</svg>`;
+/**
+ * Generate a wireframe from a template by counting structural tags. Used
+ * for project components (no hand-authored wireframe). Deliberately
+ * generic — three rows of varying-length bars + an optional image box.
+ */
+export function generateWireframe(template) {
+    const lower = template.toLowerCase();
+    const hasImage = /<img\b/.test(lower);
+    const hasCta = /<a\b|<button\b/.test(lower);
+    const headings = (lower.match(/<h[1-6]\b/g) || []).length;
+    const paras = (lower.match(/<p\b/g) || []).length;
+    let y = 16;
+    const parts = [
+        '<svg viewBox="0 0 160 90" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">',
+        '<rect x="2" y="2" width="156" height="86" rx="4" fill="none" stroke="currentColor" stroke-width="1" opacity="0.25"/>',
+    ];
+    if (hasImage) {
+        parts.push('<rect x="100" y="12" width="50" height="40" rx="2" fill="currentColor" opacity="0.2"/>');
+        parts.push('<circle cx="118" cy="28" r="4" fill="currentColor" opacity="0.45"/>');
+    }
+    const contentWidth = hasImage ? 80 : 130;
+    for (let i = 0; i < Math.max(1, headings); i++) {
+        parts.push(`<rect x="14" y="${y}" width="${Math.min(contentWidth, 60)}" height="6" rx="1" fill="currentColor" opacity="0.75"/>`);
+        y += 12;
+    }
+    for (let i = 0; i < Math.max(1, paras); i++) {
+        parts.push(`<rect x="14" y="${y}" width="${contentWidth - i * 8}" height="3" rx="1" fill="currentColor" opacity="0.4"/>`);
+        y += 6;
+        if (y > 70)
+            break;
+    }
+    if (hasCta) {
+        parts.push(`<rect x="14" y="${Math.min(y + 2, 70)}" width="32" height="8" rx="2" fill="currentColor" opacity="0.7"/>`);
+    }
+    parts.push('</svg>');
+    return parts.join('');
+}
+/** Returns the block's authored wireframe, or auto-generates one. */
+export function wireframeFor(def) {
+    return def.wireframe || generateWireframe(def.template);
+}
+/* ----------------------------- starter blocks ------------------------ */
 /**
  * Four hand-tuned starter blocks. The templates lean on inline styles so
  * they render the same regardless of the surrounding page's CSS — important
@@ -133,6 +222,7 @@ export const BUILTIN_BLOCKS = [
         category: 'hero',
         description: 'Headline + subhead + CTA on the left, image on the right.',
         thumbnail: '🦸',
+        wireframe: WF_HERO_SPLIT,
         template: `
 <section style="display:grid;grid-template-columns:1fr 1fr;gap:48px;padding:80px 40px;max-width:1200px;margin:0 auto;align-items:center;font-family:system-ui,sans-serif;">
   <div>
@@ -158,6 +248,7 @@ export const BUILTIN_BLOCKS = [
         category: 'cta',
         description: 'Full-width call to action with one button.',
         thumbnail: '📣',
+        wireframe: WF_CTA_BANNER,
         template: `
 <section style="background:{{background}};color:{{text_color}};padding:64px 40px;text-align:center;font-family:system-ui,sans-serif;">
   <h2 ${BLOCK_FIELD_ATTR}="heading" style="font-size:36px;margin:0 0 12px;">{{heading}}</h2>
@@ -181,6 +272,7 @@ export const BUILTIN_BLOCKS = [
         category: 'list',
         description: 'Three icon-headline-body cards in a row.',
         thumbnail: '🧩',
+        wireframe: WF_FEATURE_GRID_3,
         template: `
 <section style="padding:80px 40px;max-width:1200px;margin:0 auto;font-family:system-ui,sans-serif;">
   <h2 ${BLOCK_FIELD_ATTR}="section_title" style="text-align:center;font-size:32px;margin:0 0 48px;color:#0f172a;">{{section_title}}</h2>
@@ -221,6 +313,7 @@ export const BUILTIN_BLOCKS = [
         category: 'social',
         description: 'Single large quote with attribution.',
         thumbnail: '💬',
+        wireframe: WF_TESTIMONIAL_QUOTE,
         template: `
 <section style="padding:64px 40px;max-width:840px;margin:0 auto;text-align:center;font-family:system-ui,sans-serif;">
   <p ${BLOCK_FIELD_ATTR}="quote" style="font-size:24px;line-height:1.5;color:#0f172a;margin:0 0 24px;font-style:italic;">"{{quote}}"</p>

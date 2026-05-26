@@ -48,8 +48,10 @@ export interface BlockDefinition {
     category: BlockCategory;
     /** Short pitch shown under the thumbnail. */
     description: string;
-    /** Emoji or icon glyph for the palette card (Phase 4 swaps for real thumbnails). */
+    /** Emoji glyph fallback (kept for backwards compatibility / palettes that don't render SVG). */
     thumbnail: string;
+    /** Inline SVG wireframe schematic for the block (preferred over thumbnail). */
+    wireframe?: string;
     /** HTML template using `{{key}}` placeholders. */
     template: string;
     /** Declared editable fields. */
@@ -78,6 +80,14 @@ export interface BlockRegistry {
     get(id: string): BlockDefinition | undefined;
 }
 export declare function createRegistry(defs: BlockDefinition[]): BlockRegistry;
+/**
+ * Generate a wireframe from a template by counting structural tags. Used
+ * for project components (no hand-authored wireframe). Deliberately
+ * generic — three rows of varying-length bars + an optional image box.
+ */
+export declare function generateWireframe(template: string): string;
+/** Returns the block's authored wireframe, or auto-generates one. */
+export declare function wireframeFor(def: Pick<BlockDefinition, 'template' | 'wireframe'>): string;
 /**
  * Four hand-tuned starter blocks. The templates lean on inline styles so
  * they render the same regardless of the surrounding page's CSS — important

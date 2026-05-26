@@ -14,13 +14,12 @@ import DirectionPicker from "../components/builder/DirectionPicker";
 import PreviewFrame from "../components/builder/PreviewFrame";
 import CodeView from "../components/builder/CodeView";
 import ZoomControls from "../components/builder/ZoomControls";
-import EditInspector from "../components/builder/EditInspector";
-import BlockPalette from "../components/builder/BlockPalette";
+import RightRail from "../components/builder/RightRail";
 import SaveComponentModal from "../components/builder/SaveComponentModal";
 import useVisualEdit from "../hooks/useVisualEdit";
 import { render as renderBlock, rerender as rerenderBlock } from "../api/blocks";
 import { listComponents, renderComponent } from "../api/components";
-import { PencilSimple, Plus } from "@phosphor-icons/react";
+import { PencilSimple, Sparkle } from "@phosphor-icons/react";
 
 export default function PageBuilderPage() {
   const { projectId, slug } = useParams();
@@ -38,9 +37,9 @@ export default function PageBuilderPage() {
   const [refreshKey, setRefreshKey] = useState(0);
   const [viewMode, setViewMode] = useState("preview");
   const [editMode, setEditMode] = useState(false);
-  const [paletteOpen, setPaletteOpen] = useState(false);
   const [saveComponentOpen, setSaveComponentOpen] = useState(false);
   const [projectComponents, setProjectComponents] = useState([]);
+  const [forceDiscovery, setForceDiscovery] = useState(false); // "Create new design" trigger
 
   // Fetch project component library on mount + when projectId changes.
   useEffect(() => {
@@ -245,9 +244,12 @@ export default function PageBuilderPage() {
   };
 
   const handleDiscoverySubmit = async (answers) => {
-    const pending = pendingBrief;
+    // pending is either the message that triggered the survey, or — when
+    // the user clicked "Create new design" — null, in which case the brief
+    // IS the message.
+    const pending = pendingBrief ?? { text: "", image: null };
     setPendingBrief(null);
-    if (!pending) return;
+    setForceDiscovery(false);
     const wantsDirection =
       (answers?.brand || answers?.brand_mode || "pick_direction") === "pick_direction" &&
       !answers?.direction_id;
@@ -261,8 +263,17 @@ export default function PageBuilderPage() {
   const handleDiscoverySkip = async () => {
     const pending = pendingBrief;
     setPendingBrief(null);
-    if (!pending) return;
+    setForceDiscovery(false);
+    if (!pending) return; // "Create new design" with no answers → just close
     await startBuild(pending);
+  };
+
+  const handleCreateNewDesign = () => {
+    // Force the discovery form open with a fresh slate, regardless of
+    // whether versions exist or messages are present.
+    setPendingDirection(null);
+    setPendingBrief(null);
+    setForceDiscovery(true);
   };
 
   const handleDirectionPick = async (directionId) => {
@@ -394,10 +405,11 @@ export default function PageBuilderPage() {
           editMode={editMode && viewMode === "preview"}
           editSelection={visualEdit.selection}
           editSelections={visualEdit.selections}
+          onCreateNewDesign={handleCreateNewDesign}
           discoveryForm={
-            pendingBrief ? (
+            pendingBrief || forceDiscovery ? (
               <DiscoveryForm
-                initialPrompt={pendingBrief.text}
+                initialPrompt={pendingBrief?.text || ""}
                 onSubmit={handleDiscoverySubmit}
                 onSkip={handleDiscoverySkip}
               />
@@ -449,39 +461,28 @@ export default function PageBuilderPage() {
             )}
           </div>
 
-          {/* Edit-mode toggle + Insert block (only when a version has been generated) */}
+          {/* Edit-mode toggle (only when a version has been generated). Blocks
+              now live in the right-rail tab, no separate insert button needed. */}
           {viewMode === "preview" && activeVersion && (
-            <div className="absolute top-4 right-4 z-20 flex gap-2">
-              {editMode && (
-                <button
-                  onClick={() => setPaletteOpen(true)}
-                  className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded text-xs font-semibold transition-colors border bg-slate-900/80 border-slate-800 text-slate-300 hover:text-white hover:border-brand-500/60"
-                  title="Insert a block"
-                >
-                  <Plus size={12} weight="bold" />
-                  Block
-                </button>
-              )}
-              <button
-                onClick={() => setEditMode((v) => !v)}
-                className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded text-xs font-semibold transition-colors border ${
-                  editMode
-                    ? "bg-brand-500 border-brand-400 text-white"
-                    : "bg-slate-900/80 border-slate-800 text-slate-300 hover:text-white"
-                }`}
-                title={editMode ? "Exit edit mode" : "Visual edit (htmlstudio)"}
-              >
-                <PencilSimple size={12} weight={editMode ? "fill" : "regular"} />
-                {editMode ? "Editing" : "Edit"}
-              </button>
-            </div>
+            <button
+              onClick={() => setEditMode((v) => !v)}
+              className={`absolute top-4 right-4 z-20 inline-flex items-center gap-1.5 px-3 py-1.5 rounded text-xs font-semibold transition-colors border ${
+                editMode
+                  ? "bg-brand-500 border-brand-400 text-white"
+                  : "bg-slate-900/80 border-slate-800 text-slate-300 hover:text-white"
+              }`}
+              title={editMode ? "Exit edit mode" : "Visual edit (htmlstudio)"}
+            >
+              <PencilSimple size={12} weight={editMode ? "fill" : "regular"} />
+              {editMode ? "Editing" : "Edit"}
+            </button>
           )}
 
           <ZoomControls zoom={zoom} onZoomChange={setZoom} />
         </main>
 
         {editMode && viewMode === "preview" && (
-          <EditInspector
+          <RightRail
             selection={visualEdit.selection}
             selections={visualEdit.selections}
             onApply={visualEdit.applyPatch}
@@ -491,46 +492,32 @@ export default function PageBuilderPage() {
               visualEdit.applyPatch({ kind: "set-outer-html", id: targetId, html });
             }}
             onSaveAsComponent={() => setSaveComponentOpen(true)}
-            onClose={visualEdit.clearSelection}
+            onClearSelection={visualEdit.clearSelection}
             saveState={visualEdit.saveState}
+            projectComponents={projectComponents}
+            onInsertBlock={async (def) => {
+              if (!visualEdit.selection) {
+                window.alert(
+                  "Select an element in the preview first — clicks insert by replacing it.",
+                );
+                return;
+              }
+              let html;
+              if (def.id?.startsWith("pc_")) {
+                const r = await renderComponent(projectId, def.id, {});
+                html = r.html;
+              } else {
+                html = renderBlock(def.id, {});
+              }
+              visualEdit.applyPatch({
+                kind: "set-outer-html",
+                id: visualEdit.selection.id,
+                html,
+              });
+            }}
           />
         )}
       </div>
-
-      <BlockPalette
-        open={paletteOpen}
-        projectComponents={projectComponents}
-        selectionLabel={
-          visualEdit.selection
-            ? `<${visualEdit.selection.tag}> ${visualEdit.selection.id}`
-            : null
-        }
-        onClose={() => setPaletteOpen(false)}
-        onInsert={async (def) => {
-          if (!visualEdit.selection) {
-            window.alert(
-              "Pick an element first — the new block will replace it. Tip: click the section you want to swap, then open the palette.",
-            );
-            return;
-          }
-          // Builtins have `id`; project components have both `id` (pc_…)
-          // and a `slug`. We render via slug when it's a project component
-          // (the server-side render uses the slug as the BlockDefinition id).
-          let html;
-          if (def.id?.startsWith("pc_")) {
-            const r = await renderComponent(projectId, def.id, {});
-            html = r.html;
-          } else {
-            html = renderBlock(def.id, {});
-          }
-          visualEdit.applyPatch({
-            kind: "set-outer-html",
-            id: visualEdit.selection.id,
-            html,
-          });
-          setPaletteOpen(false);
-        }}
-      />
 
       <SaveComponentModal
         open={saveComponentOpen}
