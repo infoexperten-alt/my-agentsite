@@ -117,8 +117,13 @@ jobs:
 
       - name: Build frontend
         working-directory: frontend
+        # See dev.yml for the rationale — npm bug #4828 means a Windows-
+        # generated package-lock.json can't be `npm ci`-installed on Linux
+        # because rollup's optional native binaries get omitted.
         run: |
-          npm ci
+          rm -f package-lock.json
+          rm -rf node_modules
+          npm install --no-audit --no-fund
           npm run build
 
       - name: Cache pip
