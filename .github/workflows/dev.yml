@@ -78,8 +78,15 @@ jobs:
 
       - name: Build frontend
         working-directory: frontend
+        # Drop the host-generated lockfile + node_modules and reinstall fresh
+        # on Linux. npm has a known bug with optional dependencies where a
+        # Windows-generated lockfile omits Linux rollup binaries
+        # (https://github.com/npm/cli/issues/4828). Skipping `npm ci` and
+        # regenerating with `npm install` lets npm pick the right platform.
         run: |
-          npm ci
+          rm -f package-lock.json
+          rm -rf node_modules
+          npm install --no-audit --no-fund
           npm run build
 
       - name: Install build deps

@@ -1,0 +1,9 @@
+{
+  "id": "saas-landing-b2b",
+  "name": "B2B SaaS landing page",
+  "category": "web",
+  "skill_id": "saas-landing",
+  "direction_id": "modern-minimal",
+  "prompt": "A B2B SaaS landing page for an AI-powered customer support tool. Hero with one benefit headline + product screenshot, customer logo strip, 3-up feature grid, deep-dive on the analytics dashboard, a single customer quote, 3-tier pricing teaser, and a CTA footer.",
+  "icon": "rocket"
+}

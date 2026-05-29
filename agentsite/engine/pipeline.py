@@ -19,7 +19,7 @@ from ..agents.orchestrator import (
     create_specialist_pipeline,
 )
 from ..config import settings
-from ..models import AgentConfig, AgentRun, PageOutput, Project, SitePlan, StyleSpec, TechStack, WSEvent
+from ..models import AgentConfig, AgentRun, DiscoveryBrief, PageOutput, Project, ReviewFeedback, SitePlan, StyleSpec, TechStack, WSEvent
 from .project_manager import ProjectManager
 from .reasoning_patch import apply_reasoning_patch
 
@@ -228,6 +228,11 @@ class GenerationPipeline:
         page_prompt: str,
         max_cost: float | None = None,
         budget_policy: str | None = None,
+        max_review_iterations: int | None = None,
+        review_threshold: int | None = None,
+        cancel_event: asyncio.Event | None = None,
+        conversation_context: str = "",
+        discovery_brief: DiscoveryBrief | None = None,
     ) -> GroupResult:
         """Run the generation pipeline for a single page version.
 
@@ -260,6 +265,26 @@ class GenerationPipeline:
             except RuntimeError:
                 pass  # No event loop in thread context — file_written events are nice-to-have
 
+        def _on_preview_update(path: str, html: str) -> None:
+            # Phase 6 — emit a `preview_update` WS event with the rendered
+            # HTML so the frontend can swap the iframe to srcdoc mode.
+            try:
+                loop = asyncio.get_running_loop()
+                # Stable content hash for iframe key=hash remount semantics
+                import hashlib as _hashlib
+                content_hash = _hashlib.sha1(html.encode("utf-8")).hexdigest()[:12]
+                task = loop.create_task(self._emit("preview_update", data={
+                    "page_slug": slug,
+                    "path": path,
+                    "html": html,
+                    "content_hash": content_hash,
+                    "bytes": len(html),
+                }))
+                _background_tasks.append(task)
+                task.add_done_callback(_background_tasks.remove)
+            except RuntimeError:
+                pass
+
         def _on_asset_created(filename: str) -> None:
             try:
                 loop = asyncio.get_running_loop()
@@ -275,7 +300,15 @@ class GenerationPipeline:
             agent_key = _agent_name_to_key(name)
             started_at = datetime.now(timezone.utc).isoformat()
             agent_model = self._agent_models.get(agent_key, "")
-            await self._emit("agent_start", agent=agent_key, data={"started_at": started_at, "model": agent_model})
+            # Phase 13 — record the routing strategy that picked this model
+            strategy = settings.agent_routing.get(agent_key, "")
+            if "/" in strategy:  # explicit model override — not a strategy
+                strategy = "explicit"
+            await self._emit("agent_start", agent=agent_key, data={
+                "started_at": started_at,
+                "model": agent_model,
+                "strategy": strategy,
+            })
             run = AgentRun(
                 project_id=project.id,
                 page_slug=slug,
@@ -283,6 +316,8 @@ class GenerationPipeline:
                 agent_name=agent_key,
                 status="running",
                 session_id=session_id,
+                strategy=strategy,
+                model=agent_model,
             )
             self._active_runs[name] = run
             self._run_start_times[name] = time.monotonic()
@@ -322,6 +357,65 @@ class GenerationPipeline:
                         or usage.get("total_cost", 0.0)  # backwards compat
                         or 0.0
                     )
+
+            # Emit review_feedback when reviewer completes
+            if agent_key == "reviewer" and output_text:
+                try:
+                    from prompture import clean_json_text as _cjt2
+                    _rfb_data = json.loads(_cjt2(output_text))
+                    _rfb = ReviewFeedback.model_validate(_rfb_data) if isinstance(_rfb_data, dict) else None
+                except Exception:
+                    _rfb = None
+                if _rfb is not None:
+                    await self._emit("review_feedback", data={
+                        "score": _rfb.score,
+                        "approved": _rfb.approved,
+                        "issues": _rfb.issues,
+                        "suggestions": _rfb.suggestions,
+                    })
+
+            # Phase 12 — surface refusal-like outputs as a WS warning so the
+            # frontend can show a "try a different model" hint. Non-fatal —
+            # the existing fallback chain handles empty output too. Also
+            # stamp the active AgentRun so it shows up in analytics later.
+            if output_text:
+                try:
+                    from .refusal import detect_refusal
+                    sig = detect_refusal(output_text)
+                    if sig.is_refusal:
+                        if run is not None:
+                            if not isinstance(run.output_summary, dict):
+                                run.output_summary = {}
+                            run.output_summary["refusal"] = {
+                                "reason": sig.reason,
+                                "matched": sig.matched[:200],
+                            }
+                        await self._emit("refusal_detected", agent=agent_key, data={
+                            "reason": sig.reason,
+                            "matched": sig.matched,
+                            "model": self._agent_models.get(agent_key, ""),
+                        })
+                except Exception:
+                    pass
+
+            # Phase 7 — when the developer was a DeepAgent, snapshot its
+            # todo list and emit it for the live TodoStream UI.
+            if agent_key == "developer":
+                try:
+                    deep_state = getattr(result, "deep_state", None) or getattr(
+                        getattr(result, "agent", None), "deep_state", None
+                    )
+                    if deep_state is not None and getattr(deep_state, "todos", None):
+                        todos_payload = [
+                            t.to_dict() if hasattr(t, "to_dict") else dict(t)
+                            for t in deep_state.todos
+                        ]
+                        if todos_payload:
+                            await self._emit("todo_update", agent="developer", data={
+                                "todos": todos_payload,
+                            })
+                except Exception:
+                    pass
 
             # Capture developer/specialist output for fallback extraction
             _build_agents = {"developer", "markup", "style", "style_scss", "script"}
@@ -425,8 +519,44 @@ class GenerationPipeline:
             "project_id": project.id,
             "on_file_written": _on_file_written,
             "on_asset_created": _on_asset_created,
+            "on_preview_update": _on_preview_update,
             "written_files": written_files,
         }
+        # Phase 3 — pre-flight gate state. write_file checks
+        # `_preflight_required`; read_guide records into `_preflight_read`.
+        if settings.preflight_enabled and settings.preflight_required_guides:
+            deps["_preflight_required"] = set(settings.preflight_required_guides)
+            deps["_preflight_read"] = set()
+
+        # Phase 10 — load top memories for this project so the PM has context.
+        memory_block = ""
+        try:
+            from ..api import deps as _api_deps
+            from .memory import render_for_context as _render_mem
+
+            if getattr(_api_deps, "memory_repo", None) is not None:
+                _facts = await _api_deps.memory_repo.list_by_project(project.id, limit=15)
+                memory_block = _render_mem(_facts)
+        except Exception:
+            logger.debug("Memory load skipped", exc_info=True)
+
+        # Phase 7 — drain any pending steer messages so the run starts clean
+        try:
+            from .interrupt import mailbox as _steer_mailbox
+            _steer_mailbox.clear(project.id)
+        except Exception:
+            pass
+
+        # Phase 1 — surface the discovery brief (if any) before planning starts
+        discovery_brief_text = ""
+        if discovery_brief is not None:
+            from ..agents.discovery import render_brief
+
+            discovery_brief_text = render_brief(discovery_brief)
+            await self._emit(
+                "discovery_brief_submitted",
+                data={"brief": discovery_brief.model_dump(), "rendered": discovery_brief_text},
+            )
 
         await self._emit("phase_start", data={"phase": "planning", "slug": slug, "version": version_number})
 
@@ -458,16 +588,55 @@ class GenerationPipeline:
                 on_agent_complete=_on_agent_complete,
                 on_agent_error=_on_agent_error,
             )
+            # Phase 11 wiring — retrieve the top relevant skills + design
+            # systems for this brief and inline them, so the PM can pick from
+            # a short ranked list instead of from a hardcoded full catalog.
+            skill_block = ""
+            design_system_block = ""
+            try:
+                from .rag_index import retrieve as _rag_retrieve
+
+                _skill_hits = _rag_retrieve(page_prompt, k=5, kinds=["skill"])
+                if _skill_hits:
+                    skill_lines = ["## Available skills (sorted by relevance to your brief)"]
+                    for h in _skill_hits:
+                        skill_lines.append(
+                            f"- `{h.entry.id}` (match {h.score:.0%}) — {h.entry.body[:140]}"
+                        )
+                    skill_block = "\n".join(skill_lines)
+
+                _ds_hits = _rag_retrieve(page_prompt, k=3, kinds=["design_system"])
+                if _ds_hits:
+                    ds_lines = ["## Candidate design systems (most relevant first)"]
+                    for h in _ds_hits:
+                        ds_lines.append(f"- `{h.entry.id}` ({h.entry.title}) — match {h.score:.0%}")
+                    design_system_block = "\n".join(ds_lines)
+            except Exception:
+                logger.debug("RAG retrieve skipped", exc_info=True)
+
+            pm_prompt = page_prompt
+            prelude_parts = []
+            if memory_block:
+                prelude_parts.append(memory_block)
+            if discovery_brief_text:
+                prelude_parts.append(discovery_brief_text)
+            if skill_block:
+                prelude_parts.append(skill_block)
+            if design_system_block:
+                prelude_parts.append(design_system_block)
+            if prelude_parts:
+                pm_prompt = "\n\n---\n\n".join(prelude_parts) + f"\n\n---\n\nUser brief:\n{page_prompt}"
+
             pm_pipeline = AsyncSequentialGroup(
                 [(pm_agent, "{prompt}")],
                 callbacks=pm_callbacks,
-                state={"prompt": page_prompt},
+                state={"prompt": pm_prompt},
                 error_policy=ErrorPolicy.raise_on_error,
                 deps=deps,
             )
             _attach_streaming_callbacks(pm_pipeline, self._emit)
 
-            pm_result = await pm_pipeline.run(page_prompt)
+            pm_result = await pm_pipeline.run(pm_prompt)
             site_plan_text = pm_result.shared_state.get("site_plan", "")
             self.site_plan_text = site_plan_text
 
@@ -503,10 +672,68 @@ class GenerationPipeline:
             if site_plan is not None:
                 required_agents = site_plan.required_agents
                 tech_stack = site_plan.tech_stack
+
+                # Phase 5 — find the page's skill (if PM picked one) and surface
+                # its instructions to the build pipeline via shared state.
+                self._skill_instructions = ""
+                self._skill_id = None
+                try:
+                    page_plan = next(
+                        (p for p in site_plan.pages if p.slug == slug),
+                        site_plan.pages[0] if site_plan.pages else None,
+                    )
+                    if page_plan and page_plan.skill_id:
+                        from ..skills import find_skill
+                        _sk = find_skill(page_plan.skill_id)
+                        if _sk is not None:
+                            self._skill_id = _sk.name
+                            self._skill_instructions = _sk.instructions
+                            logger.info("Phase 5: bound skill '%s' for page '%s'", _sk.name, slug)
+                            await self._emit("skill_bound", data={
+                                "skill": _sk.name,
+                                "description": _sk.description,
+                                "slug": slug,
+                            })
+                except Exception:
+                    logger.debug("Skill resolution skipped", exc_info=True)
+
+                # Emit site_plan_ready so hosts can inspect structure before design/dev
+                await self._emit("site_plan_ready", data={
+                    "site_plan": site_plan.model_dump(),
+                    "required_agents": required_agents,
+                    "tech_stack": tech_stack.model_dump(),
+                })
+
                 # Ensure at least one build agent is present
                 has_specialists = any(k in required_agents for k in ("markup", "style", "style_scss", "script"))
                 if not has_specialists and "developer" not in required_agents:
                     required_agents.append("developer")
+
+                # Defensive guard: some PM models (notably weaker ones)
+                # omit 'designer' from required_agents even on fresh builds.
+                # For any new build where the user hasn't picked a direction
+                # AND the project has no inherited style, the Designer must
+                # run — otherwise the developer invents brand identity from
+                # scratch and the output is rarely on-brand.
+                _has_direction = (
+                    discovery_brief is not None
+                    and discovery_brief.brand_mode == "pick_direction"
+                    and bool(discovery_brief.direction_id)
+                )
+                _has_inherited = bool(
+                    project.style_spec is not None
+                    and getattr(project.style_spec, "inherits_from", None)
+                )
+                if (
+                    "designer" not in required_agents
+                    and not _has_direction
+                    and not _has_inherited
+                ):
+                    required_agents.insert(0, "designer")
+                    logger.info(
+                        "Pipeline guard: PM omitted 'designer'; reinstating it "
+                        "for fresh build (no direction, no inherited style)."
+                    )
             else:
                 logger.debug("Could not parse required_agents from PM output, using defaults")
 
@@ -568,13 +795,40 @@ class GenerationPipeline:
                 "tech_stack": tech_stack.model_dump(),
             })
 
+            # --- Cancellation check after PM ---
+            if cancel_event and cancel_event.is_set():
+                await self._emit("generation_complete", data={
+                    "success": False, "slug": slug, "version": version_number,
+                    "files": [], "error": "Cancelled by host",
+                })
+                return GroupResult(
+                    agent_results=[], aggregate_usage={},
+                    shared_state={}, elapsed_ms=0, timeline=[], errors=[],
+                    success=False,
+                )
+
             # --- Load existing guides for template injection ---
             design_system_guide = self._pm.read_guide(project.id, "design-system.md") or ""
             architecture_guide = self._pm.read_guide(project.id, "architecture.md") or ""
 
             # --- Phase B: Run Designer standalone (with fallback) if needed ---
+            # Phase 7 — drain any steer the user sent while PM was running
+            user_steer = ""
+            try:
+                from .interrupt import mailbox as _sm
+                drained = _sm.drain(project.id)
+                if drained:
+                    user_steer = "\n".join(f"- {s}" for s in drained)
+                    await self._emit("steer_applied", data={"text": user_steer, "count": len(drained)})
+            except Exception:
+                logger.debug("steer drain skipped", exc_info=True)
+
             initial_state = {
                 "prompt": page_prompt,
+                "discovery_brief": discovery_brief_text,
+                "user_steer": user_steer,
+                "skill_instructions": getattr(self, "_skill_instructions", "") or "",
+                "skill_id": getattr(self, "_skill_id", "") or "",
                 "site_plan": site_plan_text,
                 "project_dir": self._pm.project_dir(project.id),
                 "review_feedback": "",
@@ -585,9 +839,36 @@ class GenerationPipeline:
                 "design_system_guide": design_system_guide,
                 "architecture_guide": architecture_guide,
                 "tech_stack": tech_stack.model_dump_json(),
+                "conversation_context": conversation_context,
             }
 
-            if "designer" in required_agents:
+            # Phase 2 — if the user picked a deterministic direction, synthesize
+            # StyleSpec from it and skip the Designer agent entirely.
+            direction_synthesized = False
+            if (
+                discovery_brief is not None
+                and discovery_brief.brand_mode == "pick_direction"
+                and discovery_brief.direction_id
+            ):
+                from ..agents.directions import find_direction, synthesize_style_spec
+
+                _direction = find_direction(discovery_brief.direction_id)
+                if _direction is not None:
+                    _spec = synthesize_style_spec(_direction)
+                    self.style_spec_text = _spec.model_dump_json()
+                    initial_state["style_spec"] = self.style_spec_text
+                    await self._emit("style_spec_ready", data={
+                        "style_spec": self.style_spec_text,
+                        "parsed": True,
+                        "source": "direction",
+                        "direction_id": _direction.id,
+                    })
+                    direction_synthesized = True
+                    if "designer" in required_agents:
+                        required_agents = [a for a in required_agents if a != "designer"]
+                    logger.info("Phase 2: synthesized StyleSpec from direction '%s'", _direction.id)
+
+            if not direction_synthesized and "designer" in required_agents:
                 from ..agents.designer import create_designer_agent_auto
 
                 designer_model = self._agent_models["designer"]
@@ -595,9 +876,31 @@ class GenerationPipeline:
                 designer_agent = create_designer_agent_auto(designer_model)
                 _apply_agent_overrides(designer_agent, "designer", self._agent_configs)
                 self._inject_driver(designer_agent, designer_model)
+                # Phase 9 — if project.style_spec.inherits_from is set, load
+                # the bundled/user system and instruct the Designer to extend
+                # rather than invent.
+                inherits_block = ""
+                if project.style_spec and getattr(project.style_spec, "inherits_from", None):
+                    try:
+                        from ..design_systems import find_design_system as _find_ds
+                        _ds = _find_ds(project.style_spec.inherits_from)
+                        if _ds is not None:
+                            inherits_block = (
+                                "Inherit from this existing design system "
+                                f"(`{_ds['id']}`) — extend it, don't replace it. "
+                                "Match its palette, typography, and posture exactly; "
+                                "only add tokens the system doesn't already define.\n\n"
+                                f"## {_ds['name']}\n\n{_ds['description']}\n\n"
+                                "```css\n" + _ds["raw_css"] + "\n```\n\n"
+                            )
+                    except Exception:
+                        logger.debug("Design system inheritance lookup failed", exc_info=True)
+
                 designer_prompt = (
                     "Design a visual style for this website:\n\n"
-                    f"Site Plan: {site_plan_text}\n\n"
+                    + (f"{discovery_brief_text}\n\n" if discovery_brief_text else "")
+                    + inherits_block
+                    + f"Site Plan: {site_plan_text}\n\n"
                     f"Logo URL: {project.logo_url or ''}\n"
                     f"Icon URL: {project.icon_url or ''}\n\n"
                     "Create a cohesive color scheme, typography, and spacing system."
@@ -622,6 +925,20 @@ class GenerationPipeline:
                 style_spec_text = designer_result.shared_state.get("style_spec", "")
                 self.style_spec_text = style_spec_text
 
+                # Emit style_spec_ready so hosts can preview design before dev starts
+                _style_parsed = False
+                if style_spec_text:
+                    try:
+                        from prompture import clean_json_text as _cjt
+                        json.loads(_cjt(style_spec_text))
+                        _style_parsed = True
+                    except Exception:
+                        pass
+                await self._emit("style_spec_ready", data={
+                    "style_spec": style_spec_text,
+                    "parsed": _style_parsed,
+                })
+
                 initial_state["style_spec"] = style_spec_text
 
                 # Merge designer usage into pm_result for later aggregation
@@ -636,11 +953,25 @@ class GenerationPipeline:
                 remaining_agents = [a for a in required_agents if a != "designer"]
             else:
                 remaining_agents = list(required_agents)
-                # Use project's existing style_spec or sensible defaults
-                if project.style_spec:
-                    initial_state["style_spec"] = project.style_spec.model_dump_json()
-                else:
-                    initial_state["style_spec"] = StyleSpec().model_dump_json()
+                # If the direction synthesizer already set a style_spec, keep it.
+                # Otherwise fall back to project default or empty.
+                if "style_spec" not in initial_state:
+                    if project.style_spec:
+                        initial_state["style_spec"] = project.style_spec.model_dump_json()
+                    else:
+                        initial_state["style_spec"] = StyleSpec().model_dump_json()
+
+            # --- Cancellation check after Designer ---
+            if cancel_event and cancel_event.is_set():
+                await self._emit("generation_complete", data={
+                    "success": False, "slug": slug, "version": version_number,
+                    "files": [], "error": "Cancelled by host",
+                })
+                return GroupResult(
+                    agent_results=[], aggregate_usage={},
+                    shared_state={}, elapsed_ms=0, timeline=[], errors=[],
+                    success=False,
+                )
 
             # --- Phase C: Build pipeline — specialist (parallel) or legacy (monolithic) ---
             # Build budget kwargs from per-request overrides or global settings
@@ -680,6 +1011,8 @@ class GenerationPipeline:
                     error_policy=ErrorPolicy.raise_on_error,
                     deps=deps,
                     provider_keys=self._provider_keys,
+                    max_review_iterations=max_review_iterations,
+                    review_threshold=review_threshold,
                     **budget_kwargs,
                 )
             else:
@@ -691,6 +1024,8 @@ class GenerationPipeline:
                     error_policy=ErrorPolicy.raise_on_error,
                     deps=deps,
                     provider_keys=self._provider_keys,
+                    max_review_iterations=max_review_iterations,
+                    review_threshold=review_threshold,
                     **budget_kwargs,
                 )
 
@@ -717,6 +1052,18 @@ class GenerationPipeline:
                     elapsed_ms=0,
                     timeline=[],
                     errors=[],
+                    success=False,
+                )
+
+            # --- Cancellation check after build/review pipeline ---
+            if cancel_event and cancel_event.is_set():
+                await self._emit("generation_complete", data={
+                    "success": False, "slug": slug, "version": version_number,
+                    "files": [], "error": "Cancelled by host",
+                })
+                return GroupResult(
+                    agent_results=[], aggregate_usage={},
+                    shared_state={}, elapsed_ms=0, timeline=[], errors=[],
                     success=False,
                 )
 
@@ -892,6 +1239,70 @@ class GenerationPipeline:
                 if content is not None:
                     files_content[fpath] = content
 
+            # Phase 10 — heuristic memory extraction from the inputs of this run.
+            try:
+                from ..api import deps as _api_deps
+                from .memory import extract_memories as _extract_mem
+
+                if getattr(_api_deps, "memory_repo", None) is not None and final_files:
+                    _steer_lines = user_steer.split("\n") if user_steer else []
+                    facts = _extract_mem(
+                        project_id=project.id,
+                        brief=discovery_brief,
+                        steer_lines=[s.lstrip("- ").strip() for s in _steer_lines if s.strip()],
+                        source_run_id=session_id,
+                    )
+                    # Save only facts that aren't trivially duplicate of existing rows
+                    if facts:
+                        existing = await _api_deps.memory_repo.list_by_project(project.id, limit=50)
+                        existing_keys = {(f.kind, f.body) for f in existing}
+                        new_facts = [f for f in facts if (f.kind, f.body) not in existing_keys]
+                        for f in new_facts:
+                            try:
+                                await _api_deps.memory_repo.create(f)
+                            except Exception:
+                                logger.debug("Memory create skipped", exc_info=True)
+                        if new_facts:
+                            await self._emit("memory_extracted", data={
+                                "count": len(new_facts),
+                                "facts": [f.model_dump() for f in new_facts],
+                            })
+            except Exception:
+                logger.debug("Memory extraction skipped", exc_info=True)
+
+            # Phase 4 — run the multi-dim critique panel + update ratchet.
+            # Feature-flagged: off by default; surfaces a `critique_verdict`
+            # WS event and writes <project>/quality_ratchet.json when on.
+            if settings.use_critique_panel and final_files:
+                try:
+                    from ..agents.critique import run_critique_panel
+                    from .ratchet import update_ratchet
+
+                    judge_model = self._agent_models.get("reviewer") or model
+                    verdict, _debate_result = await run_critique_panel(
+                        judge_model,
+                        page_slug=slug,
+                        deps=deps,
+                    )
+                    if verdict is not None:
+                        ratchet, accepted, regressed = update_ratchet(
+                            project.id,
+                            verdict,
+                            slug=slug,
+                            version=version_number,
+                        )
+                        await self._emit(
+                            "critique_verdict",
+                            data={
+                                "verdict": verdict.model_dump(),
+                                "accepted": accepted,
+                                "regressed": regressed,
+                                "floors": ratchet.floors,
+                            },
+                        )
+                except Exception:
+                    logger.warning("Critique panel failed (non-fatal)", exc_info=True)
+
             await self._emit(
                 "generation_complete",
                 data={
@@ -1015,16 +1426,14 @@ class GenerationPipeline:
                 self._try_extract_raw_html(project_id, slug, version, cleaned_text)
 
     def _extract_fenced_blocks(self, project_id: str, slug: str, version: int, text: str) -> bool:
-        """Extract markdown-fenced code blocks (```html, ```css, ```js) and write them.
+        """Salvage ```html/css/js fenced blocks via prompture and write them.
 
         Returns True if at least one file was written.
         """
-        import re
+        from prompture import extract_fenced_blocks
 
-        # Match ```html ... ```, ```css ... ```, ```javascript/js ... ```
-        pattern = r"```(\w+)\s*\n([\s\S]*?)```"
-        matches = re.findall(pattern, text)
-        if not matches:
+        blocks = extract_fenced_blocks(text, languages=["html", "css", "js", "javascript"])
+        if not blocks:
             return False
 
         lang_to_file = {
@@ -1033,16 +1442,12 @@ class GenerationPipeline:
             "js": "script.js",
             "javascript": "script.js",
         }
-        wrote_any = False
-        # Track which filenames have been used to avoid overwriting
         used_names: set[str] = set()
-
-        for lang, content in matches:
-            lang_lower = lang.lower()
-            filename = lang_to_file.get(lang_lower)
+        wrote_any = False
+        for block in blocks:
+            filename = lang_to_file.get(block.language)
             if not filename:
                 continue
-            # If we already wrote this filename, append a suffix
             if filename in used_names:
                 base, ext = filename.rsplit(".", 1)
                 counter = 2
@@ -1050,45 +1455,34 @@ class GenerationPipeline:
                     counter += 1
                 filename = f"{base}_{counter}.{ext}"
             used_names.add(filename)
-            self._pm.write_version_file(project_id, slug, version, filename, content.strip())
-            logger.info("Extracted fenced %s block as %s (%d bytes)", lang_lower, filename, len(content))
+            self._pm.write_version_file(project_id, slug, version, filename, block.content)
+            logger.info(
+                "Extracted fenced %s block as %s (%d bytes)",
+                block.language,
+                filename,
+                len(block.content),
+            )
             wrote_any = True
-
         return wrote_any
 
     def _try_extract_raw_html(self, project_id: str, slug: str, version: int, text: str) -> None:
-        """Attempt to extract raw HTML from agent output as a last resort."""
-        import re
+        """Salvage a raw HTML document via prompture as a last resort."""
+        from prompture import extract_html_document
 
-        # Strip markdown code fences if wrapping the entire HTML
-        stripped = re.sub(r"^```\w*\s*\n", "", text.strip())
-        stripped = re.sub(r"\n```\s*$", "", stripped)
-
-        # Look for HTML content (<!DOCTYPE or <html)
-        html_match = re.search(
-            r"(<!DOCTYPE html[\s\S]*?</html>|<html[\s\S]*?</html>)",
-            stripped,
-            re.IGNORECASE,
-        )
-        if html_match:
-            html_content = html_match.group(1)
-            self._pm.write_version_file(project_id, slug, version, "index.html", html_content)
-            logger.info("Extracted raw HTML fallback as index.html (%d bytes)", len(html_content))
-
-            # Also try to extract <style> blocks into styles.css
-            style_blocks = re.findall(r"<style[^>]*>([\s\S]*?)</style>", html_content, re.IGNORECASE)
-            if style_blocks:
-                css_content = "\n\n".join(style_blocks)
-                self._pm.write_version_file(project_id, slug, version, "styles.css", css_content)
-                logger.info("Extracted CSS fallback as styles.css (%d bytes)", len(css_content))
-
-            # Also try to extract <script> blocks into script.js
-            script_blocks = re.findall(r"<script[^>]*>([\s\S]*?)</script>", html_content, re.IGNORECASE)
-            # Filter out empty scripts and external src references
-            script_blocks = [s.strip() for s in script_blocks if s.strip()]
-            if script_blocks:
-                js_content = "\n\n".join(script_blocks)
-                self._pm.write_version_file(project_id, slug, version, "script.js", js_content)
-                logger.info("Extracted JS fallback as script.js (%d bytes)", len(js_content))
-        else:
+        doc = extract_html_document(text)
+        if not doc.found:
             logger.error("No HTML content found in developer output (length=%d)", len(text))
+            return
+
+        self._pm.write_version_file(project_id, slug, version, "index.html", doc.html)
+        logger.info("Extracted raw HTML fallback as index.html (%d bytes)", len(doc.html))
+
+        if doc.styles:
+            css_content = "\n\n".join(doc.styles)
+            self._pm.write_version_file(project_id, slug, version, "styles.css", css_content)
+            logger.info("Extracted CSS fallback as styles.css (%d bytes)", len(css_content))
+
+        if doc.scripts:
+            js_content = "\n\n".join(doc.scripts)
+            self._pm.write_version_file(project_id, slug, version, "script.js", js_content)
+            logger.info("Extracted JS fallback as script.js (%d bytes)", len(js_content))

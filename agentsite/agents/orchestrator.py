@@ -83,6 +83,9 @@ def create_pipeline(
                 "Logo URL: {logo_url}\n"
                 "Icon URL: {icon_url}\n\n"
                 "Previous review feedback (if any): {review_feedback}\n\n"
+                "Skill guidance (when set, treat as authoritative for this page type):\n"
+                "{skill_instructions}\n\n"
+                "Live user steer (incorporate these tweaks if present):\n{user_steer}\n\n"
                 "Use the write_file tool to save each file. Generate complete, "
                 "self-contained HTML with inline or linked CSS/JS.",
             ),
@@ -402,6 +405,8 @@ def create_specialist_pipeline(
                 "Logo URL: {logo_url}\n"
                 "Icon URL: {icon_url}\n"
                 "Tech Stack: {tech_stack}\n\n"
+                "Skill guidance (when set, treat as authoritative for this page type):\n"
+                "{skill_instructions}\n\n"
                 "Previous review feedback (if any): {review_feedback}\n\n"
                 "Write the HTML markup file. Reference styles.css and script.js via link/script tags.",
             )

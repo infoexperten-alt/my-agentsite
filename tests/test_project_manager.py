@@ -1,10 +1,9 @@
 """Tests for ProjectManager filesystem operations."""
 
+import json
 import zipfile
+from dataclasses import dataclass, field
 from io import BytesIO
-
-from agentsite.engine.project_manager import ProjectManager
-from agentsite.models import Project
 
 
 class TestProjectManager:
@@ -98,3 +97,69 @@ class TestProjectManager:
     def test_load_nonexistent(self, project_manager):
         result = project_manager.load_metadata("nonexistent")
         assert result is None
+
+    def test_create_includes_guides_dir(self, project_manager, sample_project):
+        path = project_manager.create(sample_project)
+        assert (path / "guides").exists()
+
+    # -- Message persistence tests --
+
+    def test_append_and_load_messages(self, project_manager, sample_project):
+        project_manager.create(sample_project)
+
+        @dataclass
+        class Msg:
+            role: str
+            content: str
+            timestamp: str
+            meta: dict = field(default_factory=dict)
+
+        project_manager.append_message(
+            sample_project.id,
+            Msg(role="user", content="Build a portfolio", timestamp="2025-01-01T00:00:00Z"),
+        )
+        project_manager.append_message(
+            sample_project.id,
+            Msg(role="assistant", content="Done!", timestamp="2025-01-01T00:01:00Z", meta={"files": ["index.html"]}),
+        )
+
+        messages = project_manager.load_messages(sample_project.id)
+        assert len(messages) == 2
+        assert messages[0]["role"] == "user"
+        assert messages[0]["content"] == "Build a portfolio"
+        assert messages[1]["role"] == "assistant"
+        assert messages[1]["meta"]["files"] == ["index.html"]
+
+    def test_load_messages_empty_project(self, project_manager, sample_project):
+        project_manager.create(sample_project)
+        messages = project_manager.load_messages(sample_project.id)
+        assert messages == []
+
+    def test_load_messages_nonexistent_project(self, project_manager):
+        messages = project_manager.load_messages("nonexistent")
+        assert messages == []
+
+    def test_load_messages_corrupted_json(self, project_manager, sample_project):
+        project_manager.create(sample_project)
+        msg_path = project_manager.project_dir(sample_project.id) / "messages.json"
+        msg_path.write_text("{not valid json", encoding="utf-8")
+        messages = project_manager.load_messages(sample_project.id)
+        assert messages == []
+
+    def test_load_messages_non_list_json(self, project_manager, sample_project):
+        project_manager.create(sample_project)
+        msg_path = project_manager.project_dir(sample_project.id) / "messages.json"
+        msg_path.write_text('{"key": "value"}', encoding="utf-8")
+        messages = project_manager.load_messages(sample_project.id)
+        assert messages == []
+
+    def test_load_messages_filters_non_dict_items(self, project_manager, sample_project):
+        project_manager.create(sample_project)
+        msg_path = project_manager.project_dir(sample_project.id) / "messages.json"
+        msg_path.write_text(
+            json.dumps([{"role": "user", "content": "hi"}, "bad", 42]),
+            encoding="utf-8",
+        )
+        messages = project_manager.load_messages(sample_project.id)
+        assert len(messages) == 1
+        assert messages[0]["role"] == "user"

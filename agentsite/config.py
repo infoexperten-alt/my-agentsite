@@ -35,6 +35,44 @@ class Settings(BaseSettings):
     # Response caching
     cache_enabled: bool = False
 
+    # Phase 3 — pre-flight enforcement on write_file (Developer must read
+    # design-system.md and architecture.md first). Default on.
+    preflight_enabled: bool = True
+    preflight_required_guides: list[str] = ["design-system.md", "architecture.md"]
+
+    # Phase 4 — multi-dimensional critique panel + ratchet. Default OFF for
+    # one release; flip on once Phase 11 (smart routing) lands so the panel's
+    # extra reviewer cost is offset.
+    use_critique_panel: bool = False
+
+    # Phase 7 — wrap the Developer in AsyncDeepAgent with planning on so we
+    # get streamed todos + in-flight steer support. Off by default until the
+    # plain Agent path is fully decommissioned.
+    use_deep_agent_developer: bool = False
+
+    # Phase 11 — per-agent routing. Maps agent_key -> strategy hint or
+    # explicit model id. Strategies: "fast" | "cost_optimized" | "balanced"
+    # | "quality_first". When the value contains "/" it is treated as an
+    # explicit model id and used verbatim.
+    agent_routing: dict[str, str] = {
+        # Reviewers can be cheap; judge wants quality
+        "accessibility": "cost_optimized",
+        "seo": "cost_optimized",
+        "critique_visual_fidelity": "cost_optimized",
+        "critique_accessibility": "cost_optimized",
+        "critique_content_quality": "fast",
+        "critique_code_health": "balanced",
+        "critique_judge": "quality_first",
+    }
+    # Strategy -> model id pool (first wins, fall through to next). Empty
+    # pools fall back to settings.default_model.
+    routing_model_pools: dict[str, list[str]] = {
+        "fast": [],
+        "cost_optimized": [],
+        "balanced": [],
+        "quality_first": [],
+    }
+
     @property
     def projects_dir(self) -> Path:
         return self.data_dir / "projects"

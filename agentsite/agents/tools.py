@@ -2,14 +2,15 @@
 
 from __future__ import annotations
 
+import base64
 import json
 import logging
 import os
 import uuid
 from pathlib import Path
 
-import httpx
 from prompture import RunContext, ToolRegistry
+from prompture.drivers.img_gen_registry import get_img_gen_driver_for_model
 
 logger = logging.getLogger("agentsite.tools")
 
@@ -21,6 +22,26 @@ def write_file(ctx: RunContext, path: str, content: str) -> str:
         path: Relative file path within the version directory.
         content: Full file content to write.
     """
+    # Phase 3 — pre-flight gate. If `_preflight_required` is set in deps,
+    # block the write until every required guide has been read (or attempted).
+    # Returns an actionable error string so the model can recover by reading
+    # the missing guides and retrying. Once satisfied, the gate self-disarms.
+    required = ctx.deps.get("_preflight_required")
+    if required:
+        attempted = ctx.deps.setdefault("_preflight_read", set())
+        missing = [g for g in required if g not in attempted]
+        if missing:
+            return (
+                "PRE-FLIGHT REQUIRED — before calling write_file you must call "
+                f"read_guide() for each of: {missing}. "
+                "(These guides anchor cross-page consistency. Calling read_guide "
+                "satisfies the gate even if the guide does not exist yet — the "
+                "tool simply returns 'not found' and the gate clears.) "
+                "Retry your write_file after reading them."
+            )
+        # Gate satisfied — disarm so we only check once per run.
+        ctx.deps.pop("_preflight_required", None)
+
     version_dir: Path = ctx.deps["version_dir"]
     target = version_dir / path
 
@@ -42,6 +63,14 @@ def write_file(ctx: RunContext, path: str, content: str) -> str:
     on_file_written = ctx.deps.get("on_file_written")
     if on_file_written:
         on_file_written(path)
+
+    # Phase 6 — srcdoc live preview. For canonical HTML pages, hand the
+    # rendered body to the preview callback so the iframe can swap to
+    # srcdoc mode without waiting for a server round-trip.
+    if path.endswith(".html"):
+        on_preview = ctx.deps.get("on_preview_update")
+        if on_preview:
+            on_preview(path, content)
 
     return f"Written: {path} ({len(content)} bytes)"
 
@@ -131,6 +160,11 @@ def read_guide(ctx: RunContext, filename: str) -> str:
     Args:
         filename: Guide filename to read.
     """
+    # Phase 3 — pre-flight: record the attempt regardless of whether the guide
+    # exists. The act of asking for it is what satisfies the gate.
+    attempted = ctx.deps.setdefault("_preflight_read", set())
+    attempted.add(filename)
+
     project_dir: Path = ctx.deps["project_dir"]
     guides_dir = project_dir / "guides"
     target = guides_dir / filename
@@ -185,30 +219,16 @@ def generate_image(ctx: RunContext, prompt: str, filename: str) -> str:
     if ext not in _ALLOWED_IMAGE_EXTENSIONS:
         return f"Error: extension '{ext}' not allowed. Use one of: {sorted(_ALLOWED_IMAGE_EXTENSIONS)}"
 
-    api_key = os.environ.get("OPENAI_API_KEY", "")
-    if not api_key:
+    if not os.environ.get("OPENAI_API_KEY"):
         return "Error: OPENAI_API_KEY not set — cannot generate images"
 
     try:
-        resp = httpx.post(
-            "https://api.openai.com/v1/images/generations",
-            headers={"Authorization": f"Bearer {api_key}"},
-            json={
-                "model": "dall-e-3",
-                "prompt": prompt,
-                "n": 1,
-                "size": "1024x1024",
-                "response_format": "url",
-            },
-            timeout=60,
-        )
-        resp.raise_for_status()
-        image_url = resp.json()["data"][0]["url"]
-
-        # Download the image bytes
-        img_resp = httpx.get(image_url, timeout=30)
-        img_resp.raise_for_status()
-        img_data = img_resp.content
+        driver = get_img_gen_driver_for_model("openai/dall-e-3")
+        resp = driver.generate_image(prompt, {"size": "1024x1024", "n": 1})
+        images = resp.get("images") or []
+        if not images:
+            return "Error: image generation returned no images"
+        img_data = base64.b64decode(images[0].data)
     except Exception as exc:
         logger.warning("Image generation failed: %s", exc)
         return f"Error generating image: {exc}"

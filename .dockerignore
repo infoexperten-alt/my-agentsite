@@ -8,7 +8,9 @@ __pycache__
 .vscode
 .ruff_cache
 *.egg-info
-dist
-build
+/dist
+/build
+frontend/dist
+frontend/node_modules
 tests
 .planning

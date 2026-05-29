@@ -1,0 +1,23 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 390 844" width="390" height="844" preserveAspectRatio="xMidYMid meet" aria-label="iPhone 15 Pro frame">
+  <defs>
+    <linearGradient id="ip-edge" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%" stop-color="#1f2937"/>
+      <stop offset="100%" stop-color="#0f172a"/>
+    </linearGradient>
+  </defs>
+  <!-- Outer titanium edge -->
+  <rect x="0" y="0" width="390" height="844" rx="56" ry="56" fill="url(#ip-edge)" stroke="#111827" stroke-width="2"/>
+  <!-- Inner bezel -->
+  <rect x="8" y="8" width="374" height="828" rx="50" ry="50" fill="#000"/>
+  <!-- Screen safe area -->
+  <rect x="14" y="14" width="362" height="816" rx="44" ry="44" fill="#0b1020"/>
+  <!-- Dynamic Island -->
+  <rect x="142" y="22" width="106" height="34" rx="17" ry="17" fill="#000"/>
+  <!-- Home indicator -->
+  <rect x="135" y="816" width="120" height="5" rx="2.5" ry="2.5" fill="#374151"/>
+  <!-- Side buttons hint -->
+  <rect x="-2" y="180" width="3" height="46" rx="1.5" fill="#1f2937"/>
+  <rect x="-2" y="260" width="3" height="68" rx="1.5" fill="#1f2937"/>
+  <rect x="389" y="220" width="3" height="100" rx="1.5" fill="#1f2937"/>
+</svg>

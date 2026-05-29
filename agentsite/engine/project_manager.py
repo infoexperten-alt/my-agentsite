@@ -3,9 +3,12 @@
 from __future__ import annotations
 
 import io
+import json
 import shutil
+import tempfile
 import zipfile
 from pathlib import Path
+from typing import Any
 
 from ..config import settings
 from ..models import Project
@@ -18,7 +21,9 @@ class ProjectManager:
 
         {base}/{project_id}/
         ├── project.json
+        ├── messages.json
         ├── assets/
+        ├── guides/
         └── pages/
             ├── home/
             │   ├── v1/
@@ -64,6 +69,7 @@ class ProjectManager:
         d.mkdir(parents=True, exist_ok=True)
         (d / "pages").mkdir(exist_ok=True)
         (d / "assets").mkdir(exist_ok=True)
+        (d / "guides").mkdir(exist_ok=True)
 
         meta_path = d / "project.json"
         meta_path.write_text(project.model_dump_json(indent=2), encoding="utf-8")
@@ -178,6 +184,51 @@ class ProjectManager:
         if not gdir.exists():
             return []
         return sorted(f.name for f in gdir.iterdir() if f.is_file())
+
+    # -- Messages (conversation history) --
+
+    def _messages_path(self, project_id: str) -> Path:
+        return self.project_dir(project_id) / "messages.json"
+
+    def _safe_read_messages(self, path: Path) -> list[dict[str, Any]]:
+        """Safely load messages from a JSON file, returning [] on errors."""
+        if not path.exists():
+            return []
+        try:
+            raw = json.loads(path.read_text(encoding="utf-8"))
+        except (json.JSONDecodeError, OSError, UnicodeDecodeError):
+            return []
+        if not isinstance(raw, list):
+            return []
+        return [item for item in raw if isinstance(item, dict)]
+
+    def append_message(self, project_id: str, message: object) -> None:
+        """Append a ConversationMessage (dataclass) to messages.json.
+
+        Uses atomic write (temp file + rename) to prevent corruption
+        from concurrent or interrupted writes.
+        """
+        import dataclasses
+
+        path = self._messages_path(project_id)
+        messages = self._safe_read_messages(path)
+        messages.append(dataclasses.asdict(message))
+
+        # Atomic write: write to a temp file in the same directory, then rename
+        fd, tmp_path = tempfile.mkstemp(
+            dir=path.parent, suffix=".tmp", prefix=".messages_"
+        )
+        try:
+            with open(fd, "w", encoding="utf-8") as f:
+                json.dump(messages, f, indent=2)
+            Path(tmp_path).replace(path)
+        except BaseException:
+            Path(tmp_path).unlink(missing_ok=True)
+            raise
+
+    def load_messages(self, project_id: str) -> list[dict[str, Any]]:
+        """Load conversation messages from disk. Returns [] if file is missing or invalid."""
+        return self._safe_read_messages(self._messages_path(project_id))
 
     # -- Export --
 

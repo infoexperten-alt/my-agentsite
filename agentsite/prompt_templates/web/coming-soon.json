@@ -1,0 +1,9 @@
+{
+  "id": "coming-soon",
+  "name": "Waitlist teaser",
+  "category": "web",
+  "skill_id": "coming-soon",
+  "direction_id": "brutalist-experimental",
+  "prompt": "A coming-soon page for a developer-tools startup launching in Q3. Bold typographic launch statement, one decisive visual flourish (typographic, not stock illustration), email capture form with a success state, no other navigation.",
+  "icon": "hourglass"
+}

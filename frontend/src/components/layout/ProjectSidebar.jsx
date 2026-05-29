@@ -13,14 +13,15 @@ import {
   ArrowUpRight,
   GithubLogo,
 } from "@phosphor-icons/react";
+import ThemeToggle from "../shared/ThemeToggle";
 
 const projectNav = [
   { path: "", label: "Overview & Pages", icon: Kanban, end: true },
   { path: "/brand", label: "Brand", icon: PaintBrush },
   { path: "/navigation", label: "Navigation", icon: List },
   { path: "/library", label: "Library", icon: Books },
-  { path: "/seo", label: "SEO", icon: MagnifyingGlass, soon: true },
-  { path: "/deployments", label: "Deployments", icon: Rocket, soon: true },
+  { path: "/seo", label: "SEO", icon: MagnifyingGlass },
+  { path: "/deployments", label: "Deployments", icon: Rocket },
   { path: "/settings", label: "Settings", icon: Gear },
 ];
 
@@ -91,6 +92,7 @@ export default function ProjectSidebar() {
             Enjoying AgentSite? You'll love CachiBot — AI-powered multi-agent orchestration taken further.
           </p>
         </a>
+        <ThemeToggle />
         <a
           href="https://github.com/jhd3197/AgentSite"
           target="_blank"

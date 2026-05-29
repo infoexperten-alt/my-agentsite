@@ -16,6 +16,42 @@ from pydantic import BaseModel, Field
 # ------------------------------------------------------------------
 
 
+class DiscoveryBrief(BaseModel):
+    """30-second discovery answers — ported from open-design discovery form.
+
+    Captures what the user is building, who it's for, the brand context, and
+    rough scope before the PM agent runs. Fields are intentionally permissive
+    (defaults + lists) so partial answers still validate.
+    """
+
+    output: str = Field(
+        default="",
+        description=(
+            "Surface type. One of: 'slide_deck', 'web_prototype', 'app_prototype', "
+            "'dashboard', 'editorial', 'other'."
+        ),
+    )
+    platform: list[str] = Field(
+        default_factory=list,
+        description="Target platforms: 'responsive_web', 'desktop_web', 'ios', 'android', 'tablet', 'desktop_app', 'fixed_canvas'.",
+    )
+    audience: str = Field(default="", description="Who this is for (free text).")
+    tone: list[str] = Field(
+        default_factory=list,
+        description="Visual tone keywords (e.g. 'editorial', 'modern_minimal', 'playful', 'tech_utility', 'luxury', 'brutalist', 'human').",
+    )
+    brand_mode: str = Field(
+        default="pick_direction",
+        description="One of: 'pick_direction', 'brand_spec', 'reference_match'.",
+    )
+    scale: str = Field(default="", description="Rough scope (e.g. '1 landing + 3 sub-pages').")
+    constraints: str = Field(default="", description="Anything else: deadlines, must-use fonts, things to avoid.")
+    direction_id: str | None = Field(
+        default=None,
+        description="When brand_mode=='pick_direction' and the user has chosen one, the direction id (e.g. 'modern-minimal').",
+    )
+
+
 class TechStack(BaseModel):
     """Technology choices for a website build, decided by the PM agent."""
 
@@ -31,6 +67,13 @@ class PagePlan(BaseModel):
     title: str = Field(description="Page title")
     sections: list[str] = Field(description="Ordered list of section descriptions")
     priority: int = Field(default=1, description="Build priority (1 = highest)")
+    skill_id: str | None = Field(
+        default=None,
+        description=(
+            "Phase 5 — id of the skill (from GET /api/skills) whose persona will guide "
+            "the Developer for this page. None = use the default Developer persona."
+        ),
+    )
 
 
 class SitePlan(BaseModel):
@@ -143,6 +186,27 @@ class StyleSpec(BaseModel):
     transition_speed: str = Field(default="150ms", description="Default transition duration")
     backdrop_blur: str = Field(default="8px", description="Backdrop blur amount")
 
+    # Phase 9 — design-system inheritance
+    inherits_from: str | None = Field(
+        default=None,
+        description=(
+            "ID of a bundled or user-saved design system. When set, the Designer "
+            "extends those tokens instead of inventing fresh ones."
+        ),
+    )
+
+    # Phase 2 — direction-library binding
+    direction_id: str | None = Field(
+        default=None,
+        description="When the StyleSpec was synthesized from a `DesignDirection`, its id.",
+    )
+    bg_oklch: str | None = Field(default=None, description="Background in OKLch (parallel to background_color).")
+    surface_oklch: str | None = Field(default=None, description="Surface in OKLch.")
+    fg_oklch: str | None = Field(default=None, description="Foreground/text in OKLch.")
+    muted_oklch: str | None = Field(default=None, description="Muted text/border in OKLch.")
+    border_oklch: str | None = Field(default=None, description="Border in OKLch.")
+    accent_oklch: str | None = Field(default=None, description="Accent in OKLch.")
+
 
 class GeneratedFile(BaseModel):
     """A single file produced by the Developer Agent."""
@@ -179,6 +243,67 @@ class ReviewFeedback(BaseModel):
     suggestions: list[str] = Field(default_factory=list, description="Improvement suggestions")
     score: int = Field(default=5, description="Quality score from 1-10")
     approved: bool = Field(default=False, description="True if score >= 7 and no critical issues")
+
+
+# ------------------------------------------------------------------
+# Phase 4 — Multi-dimensional critique
+# ------------------------------------------------------------------
+
+
+CRITIQUE_DIMENSIONS = (
+    "visual_fidelity",
+    "accessibility",
+    "content_quality",
+    "code_health",
+)
+
+
+class DimensionScore(BaseModel):
+    """One reviewer's verdict for a single dimension."""
+
+    dimension: str = Field(description="One of CRITIQUE_DIMENSIONS")
+    score: int = Field(default=5, description="1-10")
+    issues: list[str] = Field(default_factory=list)
+    suggestions: list[str] = Field(default_factory=list)
+
+
+class ReviewVerdict(BaseModel):
+    """Aggregated judgment produced by the critique panel's judge."""
+
+    scores: list[DimensionScore] = Field(default_factory=list)
+    overall_score: int = Field(default=5, description="Min of dimension scores or judge override")
+    approved: bool = Field(default=False)
+    summary: str = Field(default="")
+
+    def score_map(self) -> dict[str, int]:
+        return {d.dimension: d.score for d in self.scores}
+
+
+class MemoryFact(BaseModel):
+    """Phase 10 — a durable per-project fact learned from prior runs."""
+
+    id: str = Field(default_factory=lambda: uuid.uuid4().hex[:12])
+    project_id: str = Field(default="")
+    kind: str = Field(default="preference", description="preference | constraint | brand | other")
+    body: str = Field(description="One-sentence fact in second person ('You prefer …').")
+    confidence: float = Field(default=0.5, description="0-1")
+    source_run_id: str = Field(default="")
+    created_at: str = Field(default_factory=lambda: datetime.now(timezone.utc).isoformat())
+
+
+class QualityRatchet(BaseModel):
+    """Per-project floor: future runs must equal or exceed every dimension."""
+
+    project_id: str = Field(default="")
+    floors: dict[str, int] = Field(
+        default_factory=dict,
+        description="Dimension -> minimum acceptable score (0 = no floor yet).",
+    )
+    last_verdict: ReviewVerdict | None = Field(default=None)
+    history: list[dict] = Field(
+        default_factory=list,
+        description="Append-only log: {ts, slug, version, scores, accepted, raised}.",
+    )
 
 
 # ------------------------------------------------------------------
@@ -274,6 +399,8 @@ class AgentRun(BaseModel):
     reasoning: str = Field(default="")
     session_id: str = Field(default="")  # Prompture tracker session ID
     output_summary: dict = Field(default_factory=dict)
+    strategy: str = Field(default="", description="Routing strategy that picked this run's model")
+    model: str = Field(default="", description="Concrete model id used for this run")
 
 
 # ------------------------------------------------------------------
@@ -294,6 +421,48 @@ class ChatMessage(BaseModel):
 
 
 # ------------------------------------------------------------------
+# Project components (htmlstudio Phase 4 — user-saved reusable blocks)
+# ------------------------------------------------------------------
+
+
+class BlockFieldModel(BaseModel):
+    """One editable surface on a BlockDefinition. Mirror of htmlstudio's BlockField."""
+
+    key: str
+    type: str = "text"  # text/textarea/url/image/color/select/number/boolean
+    label: str = ""
+    help: str = ""
+    default: str | int | float | bool | None = None
+    options: list[dict] = Field(default_factory=list)  # for type=select
+    optional: bool = False
+
+
+class ProjectComponent(BaseModel):
+    """A reusable block definition saved to a specific project.
+
+    Compatible shape with htmlstudio's `BlockDefinition` so the same
+    palette / config form / render path works for builtins and project
+    components alike.
+    """
+
+    id: str = Field(default_factory=lambda: "pc_" + uuid.uuid4().hex[:10])
+    project_id: str
+    slug: str
+    name: str
+    category: str = "custom"
+    description: str = ""
+    thumbnail: str = "🧱"
+    template: str  # HTML with {{key}} placeholders
+    fields: list[BlockFieldModel] = Field(default_factory=list)
+    # Audit trail — where this component was extracted from
+    source_instance_id: str | None = None
+    source_page_slug: str | None = None
+    source_version: int | None = None
+    created_at: str = Field(default_factory=lambda: datetime.now(timezone.utc).isoformat())
+    updated_at: str = Field(default_factory=lambda: datetime.now(timezone.utc).isoformat())
+
+
+# ------------------------------------------------------------------
 # WebSocket event model
 # ------------------------------------------------------------------
 
@@ -307,7 +476,11 @@ class WSEvent(BaseModel):
             "agent_thinking, agent_step, agent_iteration, agent_output, "
             "text_delta, tool_start, tool_end, "
             "error, file_written, generation_complete, "
-            "pipeline_plan, model_fallback, budget_exceeded"
+            "pipeline_plan, model_fallback, budget_exceeded, "
+            "discovery_form_requested, discovery_brief_submitted, "
+            "critique_verdict, preview_update, skill_bound, "
+            "todo_update, steer_received, steer_applied, "
+            "memory_extracted, refusal_detected"
         )
     )
     agent: str = Field(default="", description="Agent name")

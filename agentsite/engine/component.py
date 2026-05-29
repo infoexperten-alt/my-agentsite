@@ -27,6 +27,7 @@ import json
 import logging
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
@@ -61,6 +62,10 @@ class GenerationConfig:
     style_spec: StyleSpec | None = None
     logo_url: str = ""
     icon_url: str = ""
+    max_review_iterations: int | None = None
+    review_threshold: int | None = None
+    cancel_event: asyncio.Event | None = None
+    conversation_context: str = ""
 
 
 @dataclass
@@ -79,6 +84,39 @@ class GenerationResult:
     site_plan_raw: str = ""
     success: bool = True
     error: str | None = None
+
+
+@dataclass
+class ConversationMessage:
+    """A single message in a project's conversation history."""
+
+    role: str  # "user" or "assistant"
+    content: str  # Human-readable text
+    timestamp: str  # ISO 8601 UTC
+    meta: dict[str, Any] = field(default_factory=dict)
+
+
+@dataclass
+class PageState:
+    """Snapshot of a single page's latest version."""
+
+    slug: str
+    latest_version: int
+    files: list[str]
+    files_content: dict[str, str]
+
+
+@dataclass
+class ProjectState:
+    """Full restorable state of a project."""
+
+    project_id: str
+    name: str
+    model: str
+    style_spec: StyleSpec | None
+    site_plan_raw: str
+    pages: list[PageState]
+    messages: list[ConversationMessage]
 
 
 # ---------------------------------------------------------------------------
@@ -283,6 +321,87 @@ async def regenerate_page(
     )
 
 
+def load_project(output_dir: Path, project_id: str) -> ProjectState | None:
+    """Load a project's full state from disk.
+
+    Returns the project metadata, conversation history, site plan,
+    and latest version of every page — ready to continue where you
+    left off.
+
+    Returns ``None`` if the project directory does not exist.
+    """
+    pm = ProjectManager(base_dir=output_dir)
+    project = pm.load_metadata(project_id)
+    if project is None:
+        return None
+
+    # Conversation history
+    raw_messages = pm.load_messages(project_id)
+    messages = [
+        ConversationMessage(
+            role=m["role"],
+            content=m["content"],
+            timestamp=m["timestamp"],
+            meta=m.get("meta", {}),
+        )
+        for m in raw_messages
+    ]
+
+    # Site plan
+    site_plan_raw = pm.read_guide(project_id, "site-plan.json") or ""
+
+    # Enumerate pages — latest version per slug
+    pages: list[PageState] = []
+    pages_dir = pm.pages_dir(project_id)
+    if pages_dir.exists():
+        for slug_dir in sorted(pages_dir.iterdir()):
+            if not slug_dir.is_dir():
+                continue
+            slug = slug_dir.name
+            versions = sorted(
+                int(d.name[1:])
+                for d in slug_dir.iterdir()
+                if d.is_dir() and d.name.startswith("v") and d.name[1:].isdigit()
+            )
+            if not versions:
+                continue
+            latest = versions[-1]
+            files, files_content = _collect_files(pm, project_id, slug, latest)
+            pages.append(PageState(
+                slug=slug,
+                latest_version=latest,
+                files=files,
+                files_content=files_content,
+            ))
+
+    # Parse style_spec from project metadata
+    style_spec = project.style_spec
+
+    return ProjectState(
+        project_id=project.id,
+        name=project.name,
+        model=project.model or "",
+        style_spec=style_spec,
+        site_plan_raw=site_plan_raw,
+        pages=pages,
+        messages=messages,
+    )
+
+
+def delete_project(output_dir: Path, project_id: str) -> bool:
+    """Delete a project and all its files from disk.
+
+    Returns ``True`` if the project existed and was removed,
+    ``False`` if it was not found.
+    """
+    pm = ProjectManager(base_dir=output_dir)
+    project = pm.load_metadata(project_id)
+    if project is None:
+        return False
+    pm.delete(project_id)
+    return True
+
+
 async def _run_pipeline(
     *,
     pm: ProjectManager,
@@ -312,14 +431,60 @@ async def _run_pipeline(
         provider_keys=config.provider_keys,
     )
 
+    # Persist user message
+    action = "generate" if version == 1 else "regenerate"
+    pm.append_message(
+        project.id,
+        ConversationMessage(
+            role="user",
+            content=prompt,
+            timestamp=datetime.now(timezone.utc).isoformat(),
+            meta={"slug": slug, "version": version, "action": action},
+        ),
+    )
+
+    # Prepend conversation context to prompt for iterative development
+    effective_prompt = prompt
+    if config.conversation_context:
+        effective_prompt = (
+            f"Previous conversation context:\n{config.conversation_context}\n\n"
+            f"Current request:\n{prompt}"
+        )
+
     try:
+        # Check cancellation before starting
+        if config.cancel_event and config.cancel_event.is_set():
+            pm.append_message(
+                project.id,
+                ConversationMessage(
+                    role="assistant",
+                    content="Generation cancelled before starting",
+                    timestamp=datetime.now(timezone.utc).isoformat(),
+                    meta={"slug": slug, "version": version, "action": "cancelled"},
+                ),
+            )
+            return GenerationResult(
+                project_id=project.id,
+                slug=slug,
+                version=version,
+                files=[],
+                files_content={},
+                output_dir=pm.version_dir(project.id, slug, version),
+                success=False,
+                error="Cancelled by host",
+            )
+
         result = await pipeline.generate(
             project,
             slug=slug,
             version_number=version,
-            page_prompt=prompt,
+            page_prompt=effective_prompt,
             max_cost=config.max_cost,
             budget_policy=config.budget_policy,
+            max_review_iterations=config.max_review_iterations,
+            review_threshold=config.review_threshold,
+            cancel_event=config.cancel_event,
+            conversation_context=config.conversation_context,
         )
 
         # Auto-save StyleSpec back to project.json on disk
@@ -334,6 +499,17 @@ async def _run_pipeline(
                 pm.save_metadata(project)
 
         files, files_content = _collect_files(pm, project.id, slug, version)
+
+        # Persist assistant message
+        pm.append_message(
+            project.id,
+            ConversationMessage(
+                role="assistant",
+                content=f"Generated '{slug}' page (v{version}) with {len(files)} files",
+                timestamp=datetime.now(timezone.utc).isoformat(),
+                meta={"slug": slug, "version": version, "files": files, "success": True},
+            ),
+        )
 
         return GenerationResult(
             project_id=project.id,
@@ -365,6 +541,17 @@ async def _run_pipeline(
             },
         ))
 
+        # Persist assistant message (budget exceeded)
+        pm.append_message(
+            project.id,
+            ConversationMessage(
+                role="assistant",
+                content=f"Budget exceeded while generating '{slug}' (v{version}), {len(files)} files recovered",
+                timestamp=datetime.now(timezone.utc).isoformat(),
+                meta={"slug": slug, "version": version, "files": files, "success": bool(files), "error": str(exc)},
+            ),
+        )
+
         return GenerationResult(
             project_id=project.id,
             slug=slug,
@@ -383,6 +570,17 @@ async def _run_pipeline(
 
         # Check if files were written despite the error
         files, files_content = _collect_files(pm, project.id, slug, version)
+
+        # Persist assistant message (error)
+        pm.append_message(
+            project.id,
+            ConversationMessage(
+                role="assistant",
+                content=f"Generation failed for '{slug}' (v{version}): {exc}",
+                timestamp=datetime.now(timezone.utc).isoformat(),
+                meta={"slug": slug, "version": version, "files": files, "success": bool(files), "error": str(exc)},
+            ),
+        )
 
         return GenerationResult(
             project_id=project.id,

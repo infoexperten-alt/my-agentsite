@@ -38,6 +38,17 @@ class CreatePageRequest(BaseModel):
 
 # -- Project CRUD --
 
+@router.get("/{project_id}/quality")
+async def get_quality(project_id: str, repo=Depends(get_repo)):
+    """Phase 4 — return the per-project quality ratchet (floors + history)."""
+    project = await repo.get(project_id)
+    if project is None:
+        raise HTTPException(status_code=404, detail="Project not found")
+    from ...engine.ratchet import load_ratchet
+    ratchet = load_ratchet(project_id)
+    return ratchet.model_dump()
+
+
 @router.post("", response_model=Project)
 async def create_project(req: CreateProjectRequest, repo=Depends(get_repo), pm=Depends(get_pm)):
     project = Project(name=req.name, description=req.description, model=req.model, style_spec=StyleSpec())

@@ -11,6 +11,10 @@ export default function useGeneration(projectId) {
   const [pipelineAgents, setPipelineAgents] = useState(null);
   const [agentMeta, setAgentMeta] = useState(null);
   const [parallelGroups, setParallelGroups] = useState(null);
+  // Phase 6 — live srcdoc preview per page slug
+  const [livePreview, setLivePreview] = useState({}); // slug -> { html, contentHash }
+  // Phase 7 — live todo list streamed from the deep-agent developer (if enabled)
+  const [todos, setTodos] = useState([]);
   const ws = useWebSocket(projectId);
   const versionRefreshRef = useRef(null);
   const projectRefreshRef = useRef(null);
@@ -81,6 +85,22 @@ export default function useGeneration(projectId) {
       ws.on("file_written", (msg) => {
         setFiles((prev) => [...prev, msg.data]);
       }),
+      ws.on("todo_update", (msg) => {
+        const list = msg.data?.todos;
+        if (Array.isArray(list)) setTodos(list);
+      }),
+      ws.on("preview_update", (msg) => {
+        const slug = msg.data?.page_slug;
+        if (!slug) return;
+        setLivePreview((prev) => ({
+          ...prev,
+          [slug]: {
+            html: msg.data?.html || "",
+            contentHash: msg.data?.content_hash || "",
+            path: msg.data?.path || "",
+          },
+        }));
+      }),
       ws.on("asset_created", (msg) => {
         setGeneratedAssets((prev) => [...prev, msg.data]);
       }),
@@ -98,6 +118,9 @@ export default function useGeneration(projectId) {
       }),
       ws.on("generation_complete", (msg) => {
         setGenerating(false);
+        // Phase 6 — once the final file is on disk, swap back to the static
+        // preview URL so the iframe loads from the project filesystem.
+        setLivePreview({});
         if (msg.data?.success === false && msg.data?.error) {
           setError(msg.data.error);
         } else {
@@ -125,17 +148,26 @@ export default function useGeneration(projectId) {
     return () => unsubs.forEach((fn) => fn());
   }, [ws]);
 
+  // Reset state and open the WebSocket so pipeline events arrive.
+  // Used by both direct gen.start() and the chat-driven flow (where the
+  // chat agent's start_build tool kicks off generation on the backend).
+  const prepareBuildStream = useCallback(() => {
+    setGenerating(true);
+    setAgents({});
+    setFiles([]);
+    setGeneratedAssets([]);
+    setError(null);
+    setPipelineAgents(null);
+    setAgentMeta(null);
+    setParallelGroups(null);
+    setLivePreview({});
+    setTodos([]);
+    ws.connect();
+  }, [ws]);
+
   const start = useCallback(
     async (slug, data) => {
-      setGenerating(true);
-      setAgents({});
-      setFiles([]);
-      setGeneratedAssets([]);
-      setError(null);
-      setPipelineAgents(null);
-      setAgentMeta(null);
-      setParallelGroups(null);
-      ws.connect();
+      prepareBuildStream();
       try {
         await startGeneration(projectId, slug, data);
       } catch (err) {
@@ -144,7 +176,7 @@ export default function useGeneration(projectId) {
         ws.disconnect();
       }
     },
-    [projectId, ws]
+    [projectId, ws, prepareBuildStream]
   );
 
   const onVersionRefresh = useCallback((fn) => {
@@ -155,5 +187,10 @@ export default function useGeneration(projectId) {
     projectRefreshRef.current = fn;
   }, []);
 
-  return { generating, agents, files, generatedAssets, error, pipelineAgents, agentMeta, parallelGroups, start, onVersionRefresh, onProjectRefresh };
+  const steer = useCallback((text) => {
+    if (!text || !text.trim()) return;
+    ws.send({ type: "steer", text: text.trim() });
+  }, [ws]);
+
+  return { generating, agents, files, generatedAssets, error, pipelineAgents, agentMeta, parallelGroups, livePreview, todos, start, steer, prepareBuildStream, onVersionRefresh, onProjectRefresh };
 }
