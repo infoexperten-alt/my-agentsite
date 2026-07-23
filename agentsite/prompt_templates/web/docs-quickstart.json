@@ -1,9 +1,0 @@
-{
-  "id": "docs-quickstart",
-  "name": "SDK quickstart docs",
-  "category": "web",
-  "skill_id": "docs-page",
-  "direction_id": "tech-utility",
-  "prompt": "A quickstart documentation page for a developer SDK. Left sidebar TOC, center column with prose + code samples in Python and TypeScript, right anchor TOC, callout boxes for Notes and Warnings, copy-button on every code block.",
-  "icon": "book"
-}

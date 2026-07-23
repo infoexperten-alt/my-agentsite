@@ -1,9 +1,0 @@
-{
-  "id": "pricing-saas",
-  "name": "3-tier SaaS pricing page",
-  "category": "web",
-  "skill_id": "pricing-page",
-  "direction_id": "modern-minimal",
-  "prompt": "A standalone pricing page with monthly/annual toggle, 3 tiers (Starter / Pro / Enterprise) where Pro is the recommended plan, a full feature comparison table, and a 6-question FAQ at the bottom.",
-  "icon": "currency-dollar"
-}
