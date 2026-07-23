@@ -224,3 +224,10 @@ prompture_tracking_migration.md
 .plan/
 *.png
 /.planning
+# we-dev-next
+agentsite/we-dev-next/node_modules/
+agentsite/we-dev-next/.next/
+agentsite/we-dev-next/package-lock.json
+agentsite/we-dev-next/pnpm-lock.yaml
+agentsite/we-dev-next/tsconfig.tsbuildinfo
+agentsite/we-dev-next/.env
